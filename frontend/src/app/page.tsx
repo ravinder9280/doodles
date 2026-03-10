@@ -79,7 +79,7 @@ const Page = () => {
   }, [roomMode])
 
   useEffect(() => {
-    const newSocket = io('http://localhost:3001')
+    const newSocket = io('https://doodles-nbmm.onrender.com')
 
     newSocket.on('connect', () => {
       console.log('✅ Connected to server!')
