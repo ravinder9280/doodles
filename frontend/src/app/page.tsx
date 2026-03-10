@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { io } from 'socket.io-client'
 import { Stage, Layer, Line } from 'react-konva'
 import Chat, { ChatMessage } from '../components/Chat'
+import { RefreshCcw } from 'lucide-react'
 
 interface Point {
   x: number
@@ -40,6 +41,15 @@ const Page = () => {
   const [username, setUsername] = useState<string>('')
   const [players, setPlayers] = useState<PlayerData[]>([])
   const [showUsernameInput, setShowUsernameInput] = useState<boolean>(true)
+  const [avatar, setAvatar] = useState<string>('') // current avatar URL
+
+
+  function generateRandomString(length: number) {
+    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    return Array.from({ length }, () =>
+      characters.charAt(Math.floor(Math.random() * characters.length))
+    ).join('');
+  }
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -78,7 +88,27 @@ const Page = () => {
     }
   }, [roomMode])
 
+  // Initial setup: username + avatar + socket
   useEffect(() => {
+    // Restore username from localStorage if available
+    const storedUsername = typeof window !== 'undefined' ? localStorage.getItem('username') : null
+    if (storedUsername) {
+      setUsername(storedUsername)
+    }
+
+    // Avatar setup: use stored avatar URL or generate a new one
+    if (typeof window !== 'undefined') {
+      const storedAvatar = localStorage.getItem('avatar')
+      if (storedAvatar) {
+        setAvatar(storedAvatar)
+      } else {
+        const seed = generateRandomString(8)
+        const url = generateAvatarUrl(seed)
+        localStorage.setItem('avatar', url)
+        setAvatar(url)
+      }
+    }
+
     const newSocket = io('https://doodles-nbmm.onrender.com')
 
     newSocket.on('connect', () => {
@@ -265,8 +295,11 @@ const Page = () => {
   }
 
   const handleCreateRoom = () => {
+    localStorage.setItem('username', username.trim())
+
     if (socket && connected && username.trim()) {
-      const avatarUrl = generateAvatarUrl(username.trim())
+      // Use the persisted avatar URL, or fall back to a generated one
+      const avatarUrl = avatar || generateAvatarUrl(username.trim() || generateRandomString(8))
       socket.emit('create_room', {
         username: username.trim(),
         image: avatarUrl
@@ -278,8 +311,10 @@ const Page = () => {
   }
 
   const handleJoinRoom = () => {
+    localStorage.setItem('username', username.trim())
+
     if (socket && connected && inputRoomId.trim() && username.trim()) {
-      const avatarUrl = generateAvatarUrl(username.trim())
+      const avatarUrl = avatar || generateAvatarUrl(username.trim() || generateRandomString(8))
       socket.emit('join_room', {
         roomId: inputRoomId.trim().toUpperCase(),
         username: username.trim(),
@@ -401,7 +436,7 @@ const Page = () => {
   // Room selection UI
   if (roomMode !== 'drawing') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-gray-600">
+      <div className="flex flex-col items-center justify-center min-h-screen p-4 ">
         <div className="mb-4 flex items-center gap-4">
           <div className="flex items-center gap-2">
             <div className={`w-3 h-3 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
@@ -422,16 +457,13 @@ const Page = () => {
 
           {/* Username Input */}
           {showUsernameInput && (
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Enter Your Name
-              </label>
+            <div className="mb-4 flex items-center gap-2">
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Your name"
-                className="w-full px-4 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter Your name"
+                className="max-w-[65%] md:max-w-fit flex-1 px-4 py-2 border border-gray-300 rounded focus:outline-none font-bold focus:ring-2 focus:ring-blue-500"
                 maxLength={20}
                 onKeyPress={(e) => {
                   if (e.key === 'Enter' && username.trim()) {
@@ -439,37 +471,32 @@ const Page = () => {
                   }
                 }}
               />
-              {username.trim() && (
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="text-xs text-gray-500">Your avatar:</span>
-                  <img
-                    src={generateAvatarUrl(username.trim())}
-                    alt="Avatar preview"
-                    className="w-8 h-8 rounded"
-                  />
-                </div>
-              )}
+              <div className=" flex items-center gap-2 bg-gray-100 p-2 rounded-lg">
+                <img
+                  src={avatar || generateAvatarUrl(username.trim() || 'guest')}
+                  alt="Avatar preview"
+                  className="w-8 h-8 rounded"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  const seed = generateRandomString(8)
+                  const url = generateAvatarUrl(seed)
+                  localStorage.setItem('avatar', url)
+                  setAvatar(url)
+                }}
+                className=" flex items-center gap-2 bg-gray-100 p-2 rounded-lg"
+              >
+                <RefreshCcw  size={14}/>
+              </button>
             </div>
           )}
 
           <div className="space-y-4">
             {/* Create Room */}
-            <div>
-              <button
-                onClick={handleCreateRoom}
-                disabled={!connected || !username.trim()}
-                className="w-full px-4 py-3 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
-              >
-                Create New Room
-              </button>
-            </div>
 
-            {/* Divider */}
-            <div className="flex items-center gap-4">
-              <div className="flex-1 h-px bg-gray-300"></div>
-              <span className="text-gray-500 text-sm">OR</span>
-              <div className="flex-1 h-px bg-gray-300"></div>
-            </div>
+
+
 
             {/* Join Room */}
             <div>
@@ -502,6 +529,21 @@ const Page = () => {
                 </div>
               </div>
             </div>
+            {/* Divider */}
+            <div className="flex items-center gap-4">
+              <div className="flex-1 h-px bg-gray-300"></div>
+              <span className="text-gray-500 text-sm">OR</span>
+              <div className="flex-1 h-px bg-gray-300"></div>
+            </div>
+            <div>
+              <button
+                onClick={handleCreateRoom}
+                disabled={!connected || !username.trim()}
+                className="w-full px-4 py-3 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
+              >
+                Create New Room
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -510,39 +552,39 @@ const Page = () => {
 
   // Drawing UI - Mobile Layout
   return (
-    <div className='h-screen bg-gray-100 flex flex-col max-w-4xl mx-auto overflow-hidden'>
+    <div className='h-screen bg-gray-100 flex flex-col max-w-4xl border mx-auto overflow-hidden'>
       {/* Top Bar - Mobile */}
-      <div className='bg-white border-b border-gray-200 p-2 flex items-center justify-between flex-shrink-0'>
-        <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-          <span className="text-xs font-medium text-gray-700">
-            {connected ? 'Connected' : 'Disconnected'}
-          </span>
-        </div>
-        {roomId && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-600">Room: {roomId}</span>
-            <button
-              onClick={copyRoomId}
-              className="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-            >
-              Copy
-            </button>
-            <button
-              onClick={handleLeaveRoom}
-              className="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
-            >
-              Leave
-            </button>
-          </div>
-        )}
-      </div>
 
       {/* Canvas Section - Top */}
-      <div className=' flex flex-col bg-white overflow-hidden'>
+      <div className=' flex flex-col bg-white overflow-hidden flex-1'>
+        <div className='bg-white border-b border-gray-200 p-2 z-10 flex items-center justify-between flex-shrink-0'>
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+            <span className="text-xs font-medium text-gray-700">
+              {connected ? 'Connected' : 'Disconnected'}
+            </span>
+          </div>
+          {roomId && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-600">Room: {roomId}</span>
+              <button
+                onClick={copyRoomId}
+                className="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+              >
+                Copy
+              </button>
+              <button
+                onClick={handleLeaveRoom}
+                className="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
+              >
+                Leave
+              </button>
+            </div>
+          )}
+        </div>
         <div
           ref={canvasContainerRef}
-          className='flex-1 relative bg-gray-50 flex items-center justify-center'
+          className='flex-1 relative bg-gray-100 flex items-center justify-center'
           style={{ minHeight: '300px' }}
         >
           {canvasSize.width > 0 && canvasSize.height > 0 && (
@@ -603,7 +645,7 @@ const Page = () => {
         </div>
 
         {/* Color Picker - Below Canvas */}
-        <div className='bg-white border-t border-gray-200 p-3 flex-shrink-0'>
+        {/* <div className='bg-white border-t border-gray-200 p-3 flex-shrink-0'>
           <h3 className="text-xs font-semibold mb-2 text-gray-700">Color:</h3>
           <div className="flex gap-2 flex-wrap justify-center">
             {colors.map((color) => (
@@ -619,11 +661,11 @@ const Page = () => {
               />
             ))}
           </div>
-        </div>
+        </div> */}
       </div>
+      <div className='flex-1 grid grid-cols-2 border-t border-gray-200 h-[50%]'>
 
-      {/* Chat Panel - Between Color Picker and Players List */}
-      <div className='flex-shrink-0 border-t border-gray-200' style={{ height: '250px' }}>
+        {/* Chat Panel - Between Color Picker and Players List */}
         <Chat
           socket={socket}
           roomId={roomId}
@@ -631,32 +673,31 @@ const Page = () => {
           messages={messages}
           onMessageSend={handleSendMessage}
         />
-      </div>
 
-      {/* Players List - Bottom */}
-      <div className='bg-white border-t border-gray-200 flex-shrink-0 overflow-y-auto' style={{ maxHeight: '40vh' }}>
-        <div className='p-3'>
-          <h2 className="text-sm font-semibold mb-3 text-gray-700">Players ({players.length})</h2>
-          <div className="space-y-2">
-            {players.map((player) => (
-              <div
-                key={player.socketId}
-                className={`flex items-center gap-2 p-2 rounded ${player.socketId === socketId ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'
+        {/* Players List - Bottom */}
+        <div className='bg-white  flex-shrink-0 overflow-y-auto' >
+          <div className=''>
+            <div className="space-y-2 divide-y divide-gray-200">
+              {players.map((player) => (
+                <div
+                  key={player.socketId}
+                  className={`flex items-center gap-2 py-1
                   }`}
-              >
-                <img
-                  src={player.image}
-                  alt={player.username}
-                  className="w-10 h-10 rounded flex-shrink-0"
-                />
-                <span className="text-sm font-medium text-gray-700 truncate">
-                  {player.username}
-                  {player.socketId === socketId && (
-                    <span className="text-blue-500 ml-1">(You)</span>
-                  )}
-                </span>
-              </div>
-            ))}
+                >
+                  <img
+                    src={player.image}
+                    alt={player.username}
+                    className="w-10 h-10 rounded flex-shrink-0"
+                  />
+                  <span className="text-sm font-medium text-gray-700 truncate">
+                    {player.username}
+                    {player.socketId === socketId && (
+                      <span className="text-blue-500 ml-1">(You)</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>

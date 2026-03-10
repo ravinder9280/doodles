@@ -1,5 +1,6 @@
 'use client'
 
+import { SendIcon } from 'lucide-react'
 import React, { useEffect, useRef, useState } from 'react'
 
 export interface ChatMessage {
@@ -52,32 +53,23 @@ const Chat: React.FC<ChatProps> = ({ socket, roomId, username, messages, onMessa
     }
 
     return (
-        <div className="flex flex-col h-full bg-white">
+        <div className="flex flex-col  overflow-hidden bg-white">
             {/* Messages List */}
-            <div className=" overflow-y-auto p-3 space-y-2" style={{ maxHeight: '180px', minHeight: '120px' }}>
+            <div className=" overflow-y-auto  divide-y divide-gray-200 flex-1 bg-gray-50" >
                 {!messages || messages.length === 0 ? (
-                    <div className="text-center text-gray-400 text-sm py-4">
-                        No messages yet. Start chatting!
-                    </div>
+                    <>
+                    </>
                 ) : (
                     messages.map((msg, index) => (
+
                         <div
-                            key={index}
-                            className={`flex flex-col `}
+                            className={`  px-3 py-2 bg-gray-300`}
                         >
-                            <div
-                                className={`max-w-[80%] rounded-lg px-3 py-2 bg-gray-300`}
-                            >
-                                <div className="flex items-center gap-2 mb-1">
-                                    <span className={`text-xs font-semibold `}>
-                                        {msg.user}
-                                    </span>
-                                    <span className={`text-xs ${msg.user === username ? 'text-blue-200' : 'text-gray-400'}`}>
-                                        {formatTime(msg.timestamp)}
-                                    </span>
-                                </div>
-                                <p className="text-sm break-words">{msg.message}</p>
-                            </div>
+
+                            <p className="text-sm break-words">  <span className="font-bold">
+                                {msg.user}
+                            </span>
+                                : {msg.message}</p>
                         </div>
                     ))
                 )}
@@ -85,23 +77,26 @@ const Chat: React.FC<ChatProps> = ({ socket, roomId, username, messages, onMessa
             </div>
 
             {/* Input Area */}
-            <div className="border-t border-gray-200 p-2 flex gap-2">
-                <input
-                    type="text"
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    placeholder="Type a message..."
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    disabled={!roomId || !socket}
-                />
-                <button
-                    onClick={handleSend}
-                    disabled={!inputValue.trim() || !roomId || !socket}
-                    className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-medium transition-colors"
-                >
-                    Send
-                </button>
+            <div className="border-t border-gray-200 bg-gray-100 p-2 flex gap-2">
+                <div className="relative w-full">
+
+                    <input
+                        type="text"
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        onKeyPress={handleKeyPress}
+                        placeholder="Type Here..."
+                        className="flex-1 px-3 py-2 pl-4 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
+                        disabled={!roomId || !socket}
+                    />
+                    <button
+                        onClick={handleSend}
+                        disabled={!inputValue.trim() || !roomId || !socket}
+                        className="px-4 py-2  text-blue-400 rounded-lg absolute right-0 h-full  disabled:text-gray-300 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+                    >
+                        <SendIcon className="w-4 h-4" />
+                    </button>
+                </div>
             </div>
         </div>
     )

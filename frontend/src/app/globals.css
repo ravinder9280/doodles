@@ -81,8 +81,10 @@
   * {
   }
   body {
-    @apply bg-background text-foreground;
-  }
+    @apply  text-foreground;
+    background:
+    linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.4)),
+    url("/bg.jpg");  }
   html {
     @apply font-sans;
   }
