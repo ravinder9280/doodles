@@ -2,8 +2,9 @@
   "name": "backend",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "scripts": {
-    "dist":"npx tsc",
+    "dist": "npx tsc",
     "dev": "nodemon src/index.ts",
     "start": "node dist/index.js",
     "prepare": "husky"
@@ -12,11 +13,19 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^25.3.5",
+    "@types/socket.io": "^3.0.1",
     "husky": "^9.1.7",
     "lint-staged": "^16.3.2",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "http": "^0.0.1-security",
+    "socket.io": "^4.8.3"
   }
 }
