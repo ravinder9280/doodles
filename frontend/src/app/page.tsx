@@ -135,7 +135,7 @@ const Page = () => {
     }
     
 
-    const newSocket = io(process.env.NODE_ENV=='development'?process.env.DEV_BACKEND_URL:process.env.PROD_BACKEND_URL)
+    const newSocket = io(process.env.NODE_ENV=='development'?process.env.NEXT_PUBLIC_DEV_BACKEND_URL:process.env.NEXT_PUBLIC_PROD_BACKEND_URL)
 
     newSocket.on('connect', () => {
       console.log('✅ Connected to server!')
