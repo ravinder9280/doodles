@@ -5,6 +5,7 @@ import React, { useEffect, useRef, useState } from 'react'
 
 export interface ChatMessage {
     user: string
+    userId?: string
     message: string
     timestamp: number
 }
@@ -13,11 +14,12 @@ interface ChatProps {
     socket: any
     roomId: string | null
     username: string
+    userId?: string
     messages: ChatMessage[]
     onMessageSend: (message: string) => void
 }
 
-const Chat: React.FC<ChatProps> = ({ socket, roomId, username, messages, onMessageSend }) => {
+const Chat: React.FC<ChatProps> = ({ socket, roomId, username, userId, messages, onMessageSend }) => {
     const [inputValue, setInputValue] = useState('')
     const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -63,7 +65,7 @@ const Chat: React.FC<ChatProps> = ({ socket, roomId, username, messages, onMessa
                     messages.map((msg, index) => (
 
                         <div
-                            className={`  px-3 py-2 bg-gray-300`}
+                            className={`px-3 py-2 ${msg.userId && userId && msg.userId === userId ? 'bg-blue-100' : 'bg-gray-200'}`}
                         >
 
                             <p className="text-sm break-words">  <span className="font-bold">

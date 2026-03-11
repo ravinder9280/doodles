@@ -5,7 +5,7 @@ import { io } from 'socket.io-client'
 import { Stage, Layer, Line } from 'react-konva'
 import Chat, { ChatMessage } from '../components/Chat'
 import { RefreshCcw } from 'lucide-react'
-
+import { toast } from "sonner"
 interface Point {
   x: number
   y: number
@@ -30,6 +30,7 @@ const Page = () => {
   const [socket, setSocket] = useState<any>(null)
   const [connected, setConnected] = useState(false)
   const [socketId, setSocketId] = useState<string>('')
+  const [userId, setUserId] = useState<string>('') // stable anonymous id (localStorage)
   const [isDrawing, setIsDrawing] = useState(false)
   const [currentStroke, setCurrentStroke] = useState<Point[]>([])
   const [strokes, setStrokes] = useState<Stroke[]>([])
@@ -42,7 +43,7 @@ const Page = () => {
   const [players, setPlayers] = useState<PlayerData[]>([])
   const [showUsernameInput, setShowUsernameInput] = useState<boolean>(true)
   const [avatar, setAvatar] = useState<string>('') // current avatar URL
-
+  const prevPlayersRef = useRef<PlayerData[]>([])
 
   function generateRandomString(length: number) {
     const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -72,11 +73,20 @@ const Page = () => {
   // Canvas size update effect
   useEffect(() => {
     const updateCanvasSize = () => {
-      if (canvasContainerRef.current) {
-        const container = canvasContainerRef.current
-        const width = Math.min(container.clientWidth, 900)
-        const height = Math.floor(width * 0.75)
-        setCanvasSize({ width, height })
+      const screenWidth = window.innerWidth
+
+      if (screenWidth < 768) {
+        // Mobile
+        setCanvasSize({
+          width: screenWidth - 20,
+          height: (screenWidth - 20) * 0.75
+        })
+      } else {
+        // Desktop
+        setCanvasSize({
+          width: 900,
+          height: 600
+        })
       }
     }
 
@@ -90,6 +100,21 @@ const Page = () => {
 
   // Initial setup: username + avatar + socket
   useEffect(() => {
+    // Stable userId setup (anonymous). Persist across refresh/reconnect.
+    if (typeof window !== 'undefined') {
+      const storedUserId = localStorage.getItem('userId')
+      if (storedUserId) {
+        setUserId(storedUserId)
+      } else {
+        const newId =
+          typeof crypto !== 'undefined' && 'randomUUID' in crypto
+            ? crypto.randomUUID()
+            : `u_${generateRandomString(16)}`
+        localStorage.setItem('userId', newId)
+        setUserId(newId)
+      }
+    }
+
     // Restore username from localStorage if available
     const storedUsername = typeof window !== 'undefined' ? localStorage.getItem('username') : null
     if (storedUsername) {
@@ -108,8 +133,9 @@ const Page = () => {
         setAvatar(url)
       }
     }
+    
 
-    const newSocket = io('https://doodles-nbmm.onrender.com')
+    const newSocket = io(process.env.NODE_ENV=='development'?process.env.DEV_BACKEND_URL:process.env.PROD_BACKEND_URL)
 
     newSocket.on('connect', () => {
       console.log('✅ Connected to server!')
@@ -145,10 +171,39 @@ const Page = () => {
       }
     })
 
-    // Players updated event
     newSocket.on('players_updated', (data: { players: PlayerData[] }) => {
-      console.log('Players updated:', data.players)
-      setPlayers(data.players || [])
+      const newPlayers = data.players || []
+      const prevPlayers = prevPlayersRef.current
+
+      console.log('Players updated:', newPlayers)
+
+      // Detect joined players
+      const joinedPlayers = newPlayers.filter(
+        p => !prevPlayers.some(prev => prev.socketId === p.socketId)
+      )
+
+      // Detect left players
+      const leftPlayers = prevPlayers.filter(
+        p => !newPlayers.some(n => n.socketId === p.socketId)
+      )
+
+      // Show join toasts
+      joinedPlayers.forEach(player => {
+        if (player.socketId !== socketId) {
+          toast.success(`${player.username} joined the room`)
+        }
+      })
+
+      // Show leave toasts
+      leftPlayers.forEach(player => {
+        if (player.socketId !== socketId) {
+          toast(`${player.username} left the room`)
+        }
+      })
+
+      // Update state
+      prevPlayersRef.current = newPlayers
+      setPlayers(newPlayers)
     })
 
     // Room error event
@@ -177,7 +232,15 @@ const Page = () => {
         return updated
       })
     })
+    
+    
+      newSocket.on("correct_guess", (chatData:ChatMessage) => {
+        toast.success(`${chatData.user} guesses the word`)
 
+      }
+        )
+    
+      
     // Draw event - modified to handle room-based drawing
     newSocket.on('draw', (data: { x: number; y: number; color: string; userId: string; isDrawing: boolean }) => {
       // Only process events from other users
@@ -302,7 +365,8 @@ const Page = () => {
       const avatarUrl = avatar || generateAvatarUrl(username.trim() || generateRandomString(8))
       socket.emit('create_room', {
         username: username.trim(),
-        image: avatarUrl
+        image: avatarUrl,
+        userId
       })
       setRoomMode('create')
     } else if (!username.trim()) {
@@ -318,7 +382,8 @@ const Page = () => {
       socket.emit('join_room', {
         roomId: inputRoomId.trim().toUpperCase(),
         username: username.trim(),
-        image: avatarUrl
+        image: avatarUrl,
+        userId
       })
       setRoomMode('join')
     } else if (!username.trim()) {
@@ -335,6 +400,7 @@ const Page = () => {
       setRoomMode('create')
       setStrokes([])
       setPlayers([])
+      prevPlayersRef.current = []
       setMessages([]) // Clear chat messages
       setShowUsernameInput(true)
     }
@@ -344,8 +410,8 @@ const Page = () => {
     if (socket && roomId && username && message.trim()) {
       socket.emit('chat_message', {
         roomId,
-        user: username,
-        message: message.trim()
+        message: message.trim(),
+        userId
       })
     }
   }
@@ -353,7 +419,6 @@ const Page = () => {
   const copyRoomId = () => {
     if (roomId) {
       navigator.clipboard.writeText(roomId)
-      alert(`Room ID ${roomId} copied to clipboard!`)
     }
   }
 
@@ -487,7 +552,7 @@ const Page = () => {
                 }}
                 className=" flex items-center gap-2 bg-gray-100 p-2 rounded-lg"
               >
-                <RefreshCcw  size={14}/>
+                <RefreshCcw size={14} />
               </button>
             </div>
           )}
@@ -566,6 +631,9 @@ const Page = () => {
           </div>
           {roomId && (
             <div className="flex items-center gap-2">
+              <button onClick={() => toast.success("new player joined")}>
+                toast
+              </button>
               <span className="text-xs text-gray-600">Room: {roomId}</span>
               <button
                 onClick={copyRoomId}
@@ -584,64 +652,67 @@ const Page = () => {
         </div>
         <div
           ref={canvasContainerRef}
-          className='flex-1 relative bg-gray-100 flex items-center justify-center'
-          style={{ minHeight: '300px' }}
+          className="flex items-center justify-center w-full h-full bg-gray-100 overflow-hidden"
         >
-          {canvasSize.width > 0 && canvasSize.height > 0 && (
-            <Stage
-              width={canvasSize.width}
-              height={canvasSize.height}
-              onMouseDown={handleMouseDown}
-              onTouchStart={(e) => {
-                e.evt.preventDefault()
-                const stage = e.target.getStage()
-                if (stage) {
-                  const point = stage.getPointerPosition()
-                  if (point) {
-                    const syntheticEvent = {
-                      ...e,
-                      target: stage
+          <div>
+
+            {canvasSize.width > 0 && canvasSize.height > 0 && (
+              <Stage
+                width={900}
+                height={600}
+                pixelRatio={1}
+                onMouseDown={handleMouseDown}
+                onTouchStart={(e) => {
+                  e.evt.preventDefault()
+                  const stage = e.target.getStage()
+                  if (stage) {
+                    const point = stage.getPointerPosition()
+                    if (point) {
+                      const syntheticEvent = {
+                        ...e,
+                        target: stage
+                      }
+                      handleMouseDown(syntheticEvent as any)
                     }
-                    handleMouseDown(syntheticEvent as any)
                   }
-                }
-              }}
-              onMouseMove={handleMouseMove}
-              onTouchMove={(e) => {
-                e.evt.preventDefault()
-                const stage = e.target.getStage()
-                if (stage && isDrawing) {
-                  const point = stage.getPointerPosition()
-                  if (point) {
-                    const syntheticEvent = {
-                      ...e,
-                      target: stage
+                }}
+                onMouseMove={handleMouseMove}
+                onTouchMove={(e) => {
+                  e.evt.preventDefault()
+                  const stage = e.target.getStage()
+                  if (stage && isDrawing) {
+                    const point = stage.getPointerPosition()
+                    if (point) {
+                      const syntheticEvent = {
+                        ...e,
+                        target: stage
+                      }
+                      handleMouseMove(syntheticEvent as any)
                     }
-                    handleMouseMove(syntheticEvent as any)
                   }
-                }
-              }}
-              onMouseUp={handleMouseUp}
-              onTouchEnd={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              className='border-2 border-gray-300 rounded cursor-crosshair'
-            >
-              <Layer>
-                {strokes.map((stroke, index) => (
-                  <Line
-                    key={index}
-                    points={stroke.points}
-                    stroke={stroke.color}
-                    strokeWidth={3}
-                    tension={0.5}
-                    lineCap="round"
-                    lineJoin="round"
-                    globalCompositeOperation="source-over"
-                  />
-                ))}
-              </Layer>
-            </Stage>
-          )}
+                }}
+                onMouseUp={handleMouseUp}
+                onTouchEnd={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+                className='border-2 border-gray-300 rounded cursor-crosshair'
+              >
+                <Layer>
+                  {strokes.map((stroke, index) => (
+                    <Line
+                      key={index}
+                      points={stroke.points}
+                      stroke={stroke.color}
+                      strokeWidth={3}
+                      tension={0.5}
+                      lineCap="round"
+                      lineJoin="round"
+                      globalCompositeOperation="source-over"
+                    />
+                  ))}
+                </Layer>
+              </Stage>
+            )}
+          </div>
         </div>
 
         {/* Color Picker - Below Canvas */}
@@ -670,18 +741,18 @@ const Page = () => {
           socket={socket}
           roomId={roomId}
           username={username}
+          userId={userId}
           messages={messages}
           onMessageSend={handleSendMessage}
         />
 
         {/* Players List - Bottom */}
-        <div className='bg-white  flex-shrink-0 overflow-y-auto' >
-          <div className=''>
-            <div className="space-y-2 divide-y divide-gray-200">
-              {players.map((player) => (
+        <div className='p-2  flex-shrink-0 overflow-y-auto' >
+          <div className=' bg-white'>
+              {players.map((player,idx) => (
                 <div
                   key={player.socketId}
-                  className={`flex items-center gap-2 py-1
+                  className={`flex items-center ${idx%2!=0?'bg-gray-200':''} gap-2 p-1 md:p-2
                   }`}
                 >
                   <img
@@ -697,7 +768,6 @@ const Page = () => {
                   </span>
                 </div>
               ))}
-            </div>
           </div>
         </div>
       </div>

@@ -7,15 +7,17 @@ export default function socketHandler(io: Server) {
 
     // Store current room ID in socket data
     socket.data.currentRoom = null
+    socket.data.userId = null
 
     // Create room event
-    socket.on("create_room", (data: { username: string; image: string }) => {
+    socket.on("create_room", (data: { username: string; image: string; userId?: string }) => {
       try {
-        const { username, image } = data
+        const { username, image, userId } = data
 
         // Store user data in socket
         socket.data.username = username
         socket.data.image = image
+        if (userId) socket.data.userId = userId
 
         const room = roomManager.createRoom()
         const roomId = room.roomId
@@ -55,8 +57,8 @@ export default function socketHandler(io: Server) {
     })
 
     // Join room event
-    socket.on("join_room", (data: { roomId: string; username: string; image: string }) => {
-      const { roomId, username, image } = data
+    socket.on("join_room", (data: { roomId: string; username: string; image: string; userId?: string }) => {
+      const { roomId, username, image, userId } = data
 
       if (!roomId) {
         socket.emit("room_error", { message: "Room ID is required" })
@@ -71,6 +73,7 @@ export default function socketHandler(io: Server) {
       // Store user data in socket
       socket.data.username = username
       socket.data.image = image
+      if (userId) socket.data.userId = userId
 
       // Leave previous room if any
       if (socket.data.currentRoom) {
@@ -158,10 +161,10 @@ export default function socketHandler(io: Server) {
     })
 
     // Chat message event
-    socket.on("chat_message", (data: { roomId: string; user: string; message: string }) => {
-      const { roomId, user, message } = data
+    socket.on("chat_message", (data: { roomId: string; message: string; user?: string; userId?: string }) => {
+      const { roomId, message } = data
 
-      if (!roomId || !user || !message) {
+      if (!roomId || !message) {
         return
       }
 
@@ -175,17 +178,25 @@ export default function socketHandler(io: Server) {
         return
       }
 
+      const resolvedUser = (socket.data.username || "").toString().trim() || "Anonymous"
+      const resolvedUserId = (socket.data.userId || "").toString().trim() || socket.id
+
       // Create chat message object with timestamp
       const chatData = {
-        user,
+        user: resolvedUser,
+        userId: resolvedUserId,
         message: message.trim(),
         timestamp: Date.now()
       }
+      if (chatData.message.toLowerCase() === room.word.toLowerCase()) {
+        io.to(roomId).emit("correct_guess", chatData
 
+        )
+      }
       // Broadcast to all users in the room (including sender)
       io.to(roomId).emit("chat_message", chatData)
 
-      console.log(`Chat message from ${user} in room ${roomId}: ${message}`)
+      console.log(`Chat message from ${resolvedUser} in room ${roomId}: ${message}`)
     })
 
     // Leave room event

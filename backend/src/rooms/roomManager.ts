@@ -17,6 +17,7 @@ export interface Room {
   players: playerData[]  // Array of socket IDs
   strokes: StrokeData[]  // All drawing strokes
   createdAt: number  // Timestamp
+  word:string
 }
 
 class RoomManager {
@@ -62,7 +63,8 @@ class RoomManager {
       roomId,
       players: [],
       strokes: [],
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      word:'apple'
     }
     this.rooms.set(roomId, room)
     console.log(`Room created: ${roomId}`)
