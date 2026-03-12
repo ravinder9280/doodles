@@ -165,6 +165,19 @@ class RoomManager {
   }
 
   /**
+   * Clear all strokes in a room
+   */
+  clearRoomStrokes(roomId: string): boolean {
+    const room = this.rooms.get(roomId)
+    if (!room) {
+      return false
+    }
+    room.strokes = []
+    console.log(`Cleared strokes for room ${roomId}`)
+    return true
+  }
+
+  /**
    * Get room count (for debugging)
    */
   getRoomCount(): number {

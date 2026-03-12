@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { io } from 'socket.io-client'
 import { Stage, Layer, Line } from 'react-konva'
 import Chat, { ChatMessage } from '../components/Chat'
-import { RefreshCcw } from 'lucide-react'
+import { RefreshCcw, Trash } from 'lucide-react'
 import { toast } from "sonner"
 interface Point {
   x: number
@@ -61,7 +61,7 @@ const Page = () => {
 
   const colors = [
     '#000000', '#FF0000', '#00FF00', '#0000FF',
-    '#FFFF00', '#FF00FF', '#00FFFF', '#FFA500',
+    '#FFFF00'
   ]
 
   // Generate avatar URL using DiceBear API
@@ -293,6 +293,14 @@ const Page = () => {
       }
     })
 
+    // Clear board event
+    newSocket.on('clear_board', (data: { roomId: string }) => {
+      console.log('Board cleared')
+      setStrokes([])
+      setCurrentStroke([])
+      setIsDrawing(false)
+    })
+
     newSocket.on('disconnect', () => {
       console.log('❌ Disconnected from server')
       setConnected(false)
@@ -419,6 +427,16 @@ const Page = () => {
   const copyRoomId = () => {
     if (roomId) {
       navigator.clipboard.writeText(roomId)
+    }
+  }
+
+  const handleClearBoard = () => {
+    if (socket && roomId && connected) {
+      socket.emit('clear_board', { roomId })
+      // Clear local state immediately for better UX
+      setStrokes([])
+      setCurrentStroke([])
+      setIsDrawing(false)
     }
   }
 
@@ -639,9 +657,7 @@ const Page = () => {
           </div>
           {roomId && (
             <div className="flex items-center gap-2">
-              <button onClick={() => toast.success("new player joined")}>
-                toast
-              </button>
+             
               <span className="text-xs text-gray-600">Room: {roomId}</span>
               <button
                 onClick={copyRoomId}
@@ -725,7 +741,7 @@ const Page = () => {
 
         {/* Color Picker - Below Canvas */}
         <div className='bg-white border-t border-gray-200 p-3 flex-shrink-0'>
-          <div className="flex gap-2 flex-wrap justify-center">
+          <div className="flex gap-2 flex-wrap justify-center items-center">
             {colors.map((color) => (
               <button
                 key={color}
@@ -738,6 +754,14 @@ const Page = () => {
                 title={color}
               />
             ))}
+            <button
+              onClick={handleClearBoard}
+              disabled={!connected || !roomId}
+              className="ml-2 px-3 py-1.5 bg-red-500 text-white rounded hover:bg-red-600 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1.5 transition-all"
+              title="Clear Board"
+            >
+              <Trash size={16} />
+            </button>
           </div>
         </div>
       </div>

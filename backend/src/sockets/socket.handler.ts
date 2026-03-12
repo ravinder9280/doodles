@@ -160,6 +160,33 @@ export default function socketHandler(io: Server) {
       socket.to(roomId).emit("drawEnd", { userId })
     })
 
+    // Clear board event
+    socket.on("clear_board", (data: { roomId: string }) => {
+      const { roomId } = data
+
+      if (!roomId) {
+        return
+      }
+
+      // Validate room exists and user is in room
+      if (!roomManager.roomExists(roomId)) {
+        return
+      }
+
+      const room = roomManager.getRoom(roomId)
+      if (!room || !room.players.some(player => player.socketId === socket.id)) {
+        return
+      }
+
+      // Clear strokes in room
+      roomManager.clearRoomStrokes(roomId)
+
+      // Broadcast to all users in the room (including sender)
+      io.to(roomId).emit("clear_board", { roomId })
+
+      console.log(`User ${socket.id} cleared board in room ${roomId}`)
+    })
+
     // Chat message event
     socket.on("chat_message", (data: { roomId: string; message: string; user?: string; userId?: string }) => {
       const { roomId, message } = data
