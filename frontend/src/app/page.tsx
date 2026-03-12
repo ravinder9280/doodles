@@ -134,8 +134,9 @@ const Page = () => {
     }
 
 
-    const newSocket = io(process.env.NEXT_PUBLIC_NODE_ENV == 'development' ? process.env.NEXT_PUBLIC_DEV_BACKEND_URL : process.env.NEXT_PUBLIC_PROD_BACKEND_URL)
-
+    const newSocket = io(process.env.NEXT_PUBLIC_BACKEND_URL as string, {
+      transports: ["websocket"],
+    })
     newSocket.on('connect', () => {
       console.log('✅ Connected to server!')
       setConnected(true)
