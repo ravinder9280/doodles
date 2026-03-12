@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { io } from 'socket.io-client'
 import { Stage, Layer, Line } from 'react-konva'
 import Chat, { ChatMessage } from '../components/Chat'
-import { RefreshCcw, Eraser, Trash2 } from 'lucide-react'
+import { RefreshCcw } from 'lucide-react'
 import { toast } from "sonner"
 interface Point {
   x: number
@@ -16,7 +16,6 @@ interface Stroke {
   color: string
   userId: string
   isComplete?: boolean
-  strokeId?: string
 }
 
 interface PlayerData {
@@ -36,8 +35,6 @@ const Page = () => {
   const [currentStroke, setCurrentStroke] = useState<Point[]>([])
   const [strokes, setStrokes] = useState<Stroke[]>([])
   const [selectedColor, setSelectedColor] = useState('#000000')
-  const [tool, setTool] = useState<'pen' | 'eraser'>('pen')
-  const [currentStrokeId, setCurrentStrokeId] = useState<string | null>(null)
   const [roomId, setRoomId] = useState<string | null>(null)
   const [roomMode, setRoomMode] = useState<RoomMode>('create')
   const [inputRoomId, setInputRoomId] = useState<string>('')
@@ -244,22 +241,21 @@ const Page = () => {
 
 
     // Draw event - modified to handle room-based drawing
-    newSocket.on('draw', (data: { x: number; y: number; color: string; userId: string; isDrawing: boolean; strokeId?: string }) => {
+    newSocket.on('draw', (data: { x: number; y: number; color: string; userId: string; isDrawing: boolean }) => {
       // Only process events from other users
       if (data.userId !== newSocket.id) {
         if (data.isDrawing) {
           // Add point to existing stroke or create new one
           setStrokes(prev => {
             const lastStroke = prev[prev.length - 1]
-            // Check if last stroke belongs to same user and is NOT complete and has same strokeId
-            if (lastStroke && lastStroke.userId === data.userId && !lastStroke.isComplete && lastStroke.strokeId === data.strokeId) {
+            // Check if last stroke belongs to same user and is NOT complete
+            if (lastStroke && lastStroke.userId === data.userId && !lastStroke.isComplete) {
               // Append to existing stroke - preserve color from original stroke
               const updatedStrokes = [...prev]
               updatedStrokes[updatedStrokes.length - 1] = {
                 ...lastStroke,
                 points: [...lastStroke.points, data.x, data.y],
-                color: lastStroke.color, // Preserve original color
-                strokeId: data.strokeId
+                color: lastStroke.color // Preserve original color
               }
               return updatedStrokes
             } else {
@@ -268,8 +264,7 @@ const Page = () => {
                 points: [data.x, data.y],
                 color: data.color || '#000000', // Use provided color or default
                 userId: data.userId,
-                isComplete: false,
-                strokeId: data.strokeId
+                isComplete: false
               }]
             }
           })
@@ -295,16 +290,6 @@ const Page = () => {
           return updated
         })
       }
-    })
-
-    // Stroke erased event
-    newSocket.on('stroke_erased', (data: { strokeId: string }) => {
-      setStrokes(prev => prev.filter(stroke => stroke.strokeId !== data.strokeId))
-    })
-
-    // Board cleared event
-    newSocket.on('board_cleared', () => {
-      setStrokes([])
     })
 
     newSocket.on('disconnect', () => {
@@ -333,14 +318,13 @@ const Page = () => {
         points: [...stroke.points],
         color: stroke.color,
         userId: stroke.userId,
-        isComplete: true,
-        strokeId: stroke.strokeId
+        isComplete: true
       })
     }
 
     roomStrokes.forEach((strokeData: any) => {
       if (strokeData.isDrawing) {
-        if (currentStroke !== null && currentStroke.userId === strokeData.userId && currentStroke.strokeId === strokeData.strokeId) {
+        if (currentStroke !== null && currentStroke.userId === strokeData.userId) {
           // Append to existing stroke
           currentStroke.points.push(strokeData.x, strokeData.y)
         } else {
@@ -352,8 +336,7 @@ const Page = () => {
             points: [strokeData.x, strokeData.y],
             color: strokeData.color || '#000000',
             userId: strokeData.userId,
-            isComplete: false,
-            strokeId: strokeData.strokeId
+            isComplete: false
           }
         }
       } else {
@@ -444,38 +427,16 @@ const Page = () => {
     const stage = e.target.getStage()
     const point = stage.getPointerPosition()
 
-    // If eraser tool, check if clicking on a stroke
-    if (tool === 'eraser') {
-      // Find the stroke that was clicked
-      const clickedStroke = findStrokeAtPoint(point.x, point.y)
-      if (clickedStroke && clickedStroke.strokeId) {
-        // Emit erase event
-        socket.emit('erase_stroke', {
-          roomId,
-          strokeId: clickedStroke.strokeId
-        })
-        // Optimistically remove from local state
-        setStrokes(prev => prev.filter(s => s.strokeId !== clickedStroke.strokeId))
-      }
-      return
-    }
-
-    // Pen tool - start drawing
     setIsDrawing(true)
     const newStroke: Point[] = [{ x: point.x, y: point.y }]
     setCurrentStroke(newStroke)
-
-    // Generate unique stroke ID
-    const strokeId = `${socketId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    setCurrentStrokeId(strokeId)
 
     // Create new stroke
     const stroke: Stroke = {
       points: [point.x, point.y],
       color: selectedColor,
       userId: socketId,
-      isComplete: false,
-      strokeId
+      isComplete: false
     }
     setStrokes(prev => [...prev, stroke])
 
@@ -486,71 +447,12 @@ const Page = () => {
       y: point.y,
       color: selectedColor,
       userId: socketId,
-      isDrawing: true,
-      strokeId
+      isDrawing: true
     })
   }
 
-  // Helper function to find stroke at a point
-  const findStrokeAtPoint = (x: number, y: number): Stroke | null => {
-    const threshold = 10 // Distance threshold for clicking on a stroke
-
-    for (const stroke of strokes) {
-      if (!stroke.isComplete) continue
-
-      const points = stroke.points
-      for (let i = 0; i < points.length - 2; i += 2) {
-        const x1 = points[i]
-        const y1 = points[i + 1]
-        const x2 = points[i + 2]
-        const y2 = points[i + 3]
-
-        // Calculate distance from point to line segment
-        const distance = distanceToLineSegment(x, y, x1, y1, x2, y2)
-        if (distance <= threshold) {
-          return stroke
-        }
-      }
-    }
-
-    return null
-  }
-
-  // Helper function to calculate distance from point to line segment
-  const distanceToLineSegment = (px: number, py: number, x1: number, y1: number, x2: number, y2: number): number => {
-    const A = px - x1
-    const B = py - y1
-    const C = x2 - x1
-    const D = y2 - y1
-
-    const dot = A * C + B * D
-    const lenSq = C * C + D * D
-    let param = -1
-
-    if (lenSq !== 0) {
-      param = dot / lenSq
-    }
-
-    let xx: number, yy: number
-
-    if (param < 0) {
-      xx = x1
-      yy = y1
-    } else if (param > 1) {
-      xx = x2
-      yy = y2
-    } else {
-      xx = x1 + param * C
-      yy = y1 + param * D
-    }
-
-    const dx = px - xx
-    const dy = py - yy
-    return Math.sqrt(dx * dx + dy * dy)
-  }
-
   const handleMouseMove = (e: any) => {
-    if (!isDrawing || !connected || !socket || !roomId || tool !== 'pen') return
+    if (!isDrawing || !connected || !socket || !roomId) return
 
     const stage = e.target.getStage()
     const point = stage.getPointerPosition()
@@ -561,7 +463,7 @@ const Page = () => {
     setStrokes(prev => {
       const updated = [...prev]
       const lastStroke = updated[updated.length - 1]
-      if (lastStroke && lastStroke.userId === socketId && lastStroke.strokeId === currentStrokeId) {
+      if (lastStroke && lastStroke.userId === socketId) {
         // Create new points array instead of mutating
         updated[updated.length - 1] = {
           ...lastStroke,
@@ -578,45 +480,21 @@ const Page = () => {
       y: point.y,
       color: selectedColor,
       userId: socketId,
-      isDrawing: true,
-      strokeId: currentStrokeId
+      isDrawing: true
     })
   }
 
   const handleMouseUp = () => {
-    if (!isDrawing || !connected || !socket || !roomId || tool !== 'pen') return
+    if (!isDrawing || !connected || !socket || !roomId) return
 
     setIsDrawing(false)
     setCurrentStroke([])
-
-    // Mark stroke as complete
-    setStrokes(prev => {
-      const updated = [...prev]
-      const lastStroke = updated[updated.length - 1]
-      if (lastStroke && lastStroke.userId === socketId && lastStroke.strokeId === currentStrokeId) {
-        updated[updated.length - 1] = {
-          ...lastStroke,
-          isComplete: true
-        }
-      }
-      return updated
-    })
 
     // Emit draw end with roomId
     socket.emit('drawEnd', {
       roomId,
       userId: socketId
     })
-
-    setCurrentStrokeId(null)
-  }
-
-  const handleClearBoard = () => {
-    if (!connected || !socket || !roomId) return
-
-    socket.emit('clear_board', { roomId })
-    // Optimistically clear local state
-    setStrokes([])
   }
 
   // Room selection UI
@@ -797,22 +675,11 @@ const Page = () => {
                   if (stage) {
                     const point = stage.getPointerPosition()
                     if (point) {
-                      if (tool === 'eraser') {
-                        const clickedStroke = findStrokeAtPoint(point.x, point.y)
-                        if (clickedStroke && clickedStroke.strokeId && socket && roomId) {
-                          socket.emit('erase_stroke', {
-                            roomId,
-                            strokeId: clickedStroke.strokeId
-                          })
-                          setStrokes(prev => prev.filter(s => s.strokeId !== clickedStroke.strokeId))
-                        }
-                      } else {
-                        const syntheticEvent = {
-                          ...e,
-                          target: stage
-                        }
-                        handleMouseDown(syntheticEvent as any)
+                      const syntheticEvent = {
+                        ...e,
+                        target: stage
                       }
+                      handleMouseDown(syntheticEvent as any)
                     }
                   }
                 }}
@@ -834,12 +701,12 @@ const Page = () => {
                 onMouseUp={handleMouseUp}
                 onTouchEnd={handleMouseUp}
                 onMouseLeave={handleMouseUp}
-                className={`border-2 border-gray-300 rounded ${tool === 'eraser' ? 'cursor-grab' : 'cursor-crosshair'}`}
+                className='border-2 border-gray-300 rounded cursor-crosshair'
               >
                 <Layer>
                   {strokes.map((stroke, index) => (
                     <Line
-                      key={stroke.strokeId || index}
+                      key={index}
                       points={stroke.points}
                       stroke={stroke.color}
                       strokeWidth={3}
@@ -855,61 +722,21 @@ const Page = () => {
           </div>
         </div>
 
-        {/* Color Picker and Tools - Below Canvas */}
+        {/* Color Picker - Below Canvas */}
         <div className='bg-white border-t border-gray-200 p-3 flex-shrink-0'>
-          <div className="flex gap-2 flex-wrap justify-center items-center">
-            {/* Tool Selection */}
-            <div className="flex gap-2 mr-2">
+          <div className="flex gap-2 flex-wrap justify-center">
+            {colors.map((color) => (
               <button
-                onClick={() => setTool('pen')}
-                className={`p-2 rounded border-2 transition-all ${tool === 'pen'
-                  ? 'border-blue-500 bg-blue-50'
+                key={color}
+                onClick={() => setSelectedColor(color)}
+                className={`w-8 h-8 rounded border-2 transition-all ${selectedColor === color
+                  ? 'border-gray-800 scale-110'
                   : 'border-gray-300 hover:border-gray-500'
                   }`}
-                title="Pen Tool"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 19l7-7 3 3-7 7-3-3z" />
-                  <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
-                  <path d="M2 2l7.586 7.586" />
-                  <circle cx="11" cy="11" r="2" />
-                </svg>
-              </button>
-              <button
-                onClick={() => setTool('eraser')}
-                className={`p-2 rounded border-2 transition-all ${tool === 'eraser'
-                  ? 'border-red-500 bg-red-50'
-                  : 'border-gray-300 hover:border-gray-500'
-                  }`}
-                title="Eraser Tool"
-              >
-                <Eraser size={20} />
-              </button>
-              <button
-                onClick={handleClearBoard}
-                className="p-2 rounded border-2 border-gray-300 hover:border-red-500 hover:bg-red-50 transition-all"
-                title="Clear Board"
-              >
-                <Trash2 size={20} />
-              </button>
-            </div>
-            {/* Color Picker */}
-            {tool === 'pen' && (
-              <>
-                {colors.map((color) => (
-                  <button
-                    key={color}
-                    onClick={() => setSelectedColor(color)}
-                    className={`w-8 h-8 rounded border-2 transition-all ${selectedColor === color
-                      ? 'border-gray-800 scale-110'
-                      : 'border-gray-300 hover:border-gray-500'
-                      }`}
-                    style={{ backgroundColor: color }}
-                    title={color}
-                  />
-                ))}
-              </>
-            )}
+                style={{ backgroundColor: color }}
+                title={color}
+              />
+            ))}
           </div>
         </div>
       </div>
