@@ -5,6 +5,7 @@ export interface StrokeData {
   userId: string
   isDrawing: boolean
   timestamp: number
+  strokeId?: string // Unique ID for each stroke
 }
 export interface playerData {
   socketId: string
@@ -17,7 +18,7 @@ export interface Room {
   players: playerData[]  // Array of socket IDs
   strokes: StrokeData[]  // All drawing strokes
   createdAt: number  // Timestamp
-  word:string
+  word: string
 }
 
 class RoomManager {
@@ -64,7 +65,7 @@ class RoomManager {
       players: [],
       strokes: [],
       createdAt: Date.now(),
-      word:'apple'
+      word: 'apple'
     }
     this.rooms.set(roomId, room)
     console.log(`Room created: ${roomId}`)
@@ -162,6 +163,33 @@ class RoomManager {
       return []
     }
     return room.players
+  }
+
+  /**
+   * Remove stroke from room by strokeId
+   */
+  removeStrokeById(roomId: string, strokeId: string): boolean {
+    const room = this.rooms.get(roomId)
+    if (!room) {
+      return false
+    }
+
+    // Remove all points that belong to this stroke
+    room.strokes = room.strokes.filter(stroke => stroke.strokeId !== strokeId)
+    return true
+  }
+
+  /**
+   * Clear all strokes from a room
+   */
+  clearRoomStrokes(roomId: string): boolean {
+    const room = this.rooms.get(roomId)
+    if (!room) {
+      return false
+    }
+
+    room.strokes = []
+    return true
   }
 
   /**

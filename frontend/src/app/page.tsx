@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { io } from 'socket.io-client'
 import { Stage, Layer, Line } from 'react-konva'
 import Chat, { ChatMessage } from '../components/Chat'
-import { RefreshCcw } from 'lucide-react'
+import { RefreshCcw, Eraser, Trash2 } from 'lucide-react'
 import { toast } from "sonner"
 interface Point {
   x: number
@@ -16,6 +16,7 @@ interface Stroke {
   color: string
   userId: string
   isComplete?: boolean
+  strokeId?: string
 }
 
 interface PlayerData {
@@ -35,6 +36,8 @@ const Page = () => {
   const [currentStroke, setCurrentStroke] = useState<Point[]>([])
   const [strokes, setStrokes] = useState<Stroke[]>([])
   const [selectedColor, setSelectedColor] = useState('#000000')
+  const [tool, setTool] = useState<'pen' | 'eraser'>('pen')
+  const [currentStrokeId, setCurrentStrokeId] = useState<string | null>(null)
   const [roomId, setRoomId] = useState<string | null>(null)
   const [roomMode, setRoomMode] = useState<RoomMode>('create')
   const [inputRoomId, setInputRoomId] = useState<string>('')
@@ -62,7 +65,6 @@ const Page = () => {
   const colors = [
     '#000000', '#FF0000', '#00FF00', '#0000FF',
     '#FFFF00', '#FF00FF', '#00FFFF', '#FFA500',
-    '#800080', '#FFC0CB', '#A52A2A', '#808080'
   ]
 
   // Generate avatar URL using DiceBear API
@@ -133,9 +135,9 @@ const Page = () => {
         setAvatar(url)
       }
     }
-    
 
-    const newSocket = io(process.env.NODE_ENV=='development'?process.env.NEXT_PUBLIC_DEV_BACKEND_URL:process.env.NEXT_PUBLIC_PROD_BACKEND_URL)
+
+    const newSocket = io(process.env.NEXT_PUBLIC_NODE_ENV == 'development' ? process.env.NEXT_PUBLIC_DEV_BACKEND_URL : process.env.NEXT_PUBLIC_PROD_BACKEND_URL)
 
     newSocket.on('connect', () => {
       console.log('✅ Connected to server!')
@@ -232,31 +234,32 @@ const Page = () => {
         return updated
       })
     })
-    
-    
-      newSocket.on("correct_guess", (chatData:ChatMessage) => {
-        toast.success(`${chatData.user} guesses the word`)
 
-      }
-        )
-    
-      
+
+    newSocket.on("correct_guess", (chatData: ChatMessage) => {
+      toast.success(`${chatData.user} guesses the word`)
+
+    }
+    )
+
+
     // Draw event - modified to handle room-based drawing
-    newSocket.on('draw', (data: { x: number; y: number; color: string; userId: string; isDrawing: boolean }) => {
+    newSocket.on('draw', (data: { x: number; y: number; color: string; userId: string; isDrawing: boolean; strokeId?: string }) => {
       // Only process events from other users
       if (data.userId !== newSocket.id) {
         if (data.isDrawing) {
           // Add point to existing stroke or create new one
           setStrokes(prev => {
             const lastStroke = prev[prev.length - 1]
-            // Check if last stroke belongs to same user and is NOT complete
-            if (lastStroke && lastStroke.userId === data.userId && !lastStroke.isComplete) {
+            // Check if last stroke belongs to same user and is NOT complete and has same strokeId
+            if (lastStroke && lastStroke.userId === data.userId && !lastStroke.isComplete && lastStroke.strokeId === data.strokeId) {
               // Append to existing stroke - preserve color from original stroke
               const updatedStrokes = [...prev]
               updatedStrokes[updatedStrokes.length - 1] = {
                 ...lastStroke,
                 points: [...lastStroke.points, data.x, data.y],
-                color: lastStroke.color // Preserve original color
+                color: lastStroke.color, // Preserve original color
+                strokeId: data.strokeId
               }
               return updatedStrokes
             } else {
@@ -265,7 +268,8 @@ const Page = () => {
                 points: [data.x, data.y],
                 color: data.color || '#000000', // Use provided color or default
                 userId: data.userId,
-                isComplete: false
+                isComplete: false,
+                strokeId: data.strokeId
               }]
             }
           })
@@ -291,6 +295,16 @@ const Page = () => {
           return updated
         })
       }
+    })
+
+    // Stroke erased event
+    newSocket.on('stroke_erased', (data: { strokeId: string }) => {
+      setStrokes(prev => prev.filter(stroke => stroke.strokeId !== data.strokeId))
+    })
+
+    // Board cleared event
+    newSocket.on('board_cleared', () => {
+      setStrokes([])
     })
 
     newSocket.on('disconnect', () => {
@@ -319,13 +333,14 @@ const Page = () => {
         points: [...stroke.points],
         color: stroke.color,
         userId: stroke.userId,
-        isComplete: true
+        isComplete: true,
+        strokeId: stroke.strokeId
       })
     }
 
     roomStrokes.forEach((strokeData: any) => {
       if (strokeData.isDrawing) {
-        if (currentStroke !== null && currentStroke.userId === strokeData.userId) {
+        if (currentStroke !== null && currentStroke.userId === strokeData.userId && currentStroke.strokeId === strokeData.strokeId) {
           // Append to existing stroke
           currentStroke.points.push(strokeData.x, strokeData.y)
         } else {
@@ -337,7 +352,8 @@ const Page = () => {
             points: [strokeData.x, strokeData.y],
             color: strokeData.color || '#000000',
             userId: strokeData.userId,
-            isComplete: false
+            isComplete: false,
+            strokeId: strokeData.strokeId
           }
         }
       } else {
@@ -428,16 +444,38 @@ const Page = () => {
     const stage = e.target.getStage()
     const point = stage.getPointerPosition()
 
+    // If eraser tool, check if clicking on a stroke
+    if (tool === 'eraser') {
+      // Find the stroke that was clicked
+      const clickedStroke = findStrokeAtPoint(point.x, point.y)
+      if (clickedStroke && clickedStroke.strokeId) {
+        // Emit erase event
+        socket.emit('erase_stroke', {
+          roomId,
+          strokeId: clickedStroke.strokeId
+        })
+        // Optimistically remove from local state
+        setStrokes(prev => prev.filter(s => s.strokeId !== clickedStroke.strokeId))
+      }
+      return
+    }
+
+    // Pen tool - start drawing
     setIsDrawing(true)
     const newStroke: Point[] = [{ x: point.x, y: point.y }]
     setCurrentStroke(newStroke)
+
+    // Generate unique stroke ID
+    const strokeId = `${socketId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    setCurrentStrokeId(strokeId)
 
     // Create new stroke
     const stroke: Stroke = {
       points: [point.x, point.y],
       color: selectedColor,
       userId: socketId,
-      isComplete: false
+      isComplete: false,
+      strokeId
     }
     setStrokes(prev => [...prev, stroke])
 
@@ -448,12 +486,71 @@ const Page = () => {
       y: point.y,
       color: selectedColor,
       userId: socketId,
-      isDrawing: true
+      isDrawing: true,
+      strokeId
     })
   }
 
+  // Helper function to find stroke at a point
+  const findStrokeAtPoint = (x: number, y: number): Stroke | null => {
+    const threshold = 10 // Distance threshold for clicking on a stroke
+
+    for (const stroke of strokes) {
+      if (!stroke.isComplete) continue
+
+      const points = stroke.points
+      for (let i = 0; i < points.length - 2; i += 2) {
+        const x1 = points[i]
+        const y1 = points[i + 1]
+        const x2 = points[i + 2]
+        const y2 = points[i + 3]
+
+        // Calculate distance from point to line segment
+        const distance = distanceToLineSegment(x, y, x1, y1, x2, y2)
+        if (distance <= threshold) {
+          return stroke
+        }
+      }
+    }
+
+    return null
+  }
+
+  // Helper function to calculate distance from point to line segment
+  const distanceToLineSegment = (px: number, py: number, x1: number, y1: number, x2: number, y2: number): number => {
+    const A = px - x1
+    const B = py - y1
+    const C = x2 - x1
+    const D = y2 - y1
+
+    const dot = A * C + B * D
+    const lenSq = C * C + D * D
+    let param = -1
+
+    if (lenSq !== 0) {
+      param = dot / lenSq
+    }
+
+    let xx: number, yy: number
+
+    if (param < 0) {
+      xx = x1
+      yy = y1
+    } else if (param > 1) {
+      xx = x2
+      yy = y2
+    } else {
+      xx = x1 + param * C
+      yy = y1 + param * D
+    }
+
+    const dx = px - xx
+    const dy = py - yy
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+
   const handleMouseMove = (e: any) => {
-    if (!isDrawing || !connected || !socket || !roomId) return
+    if (!isDrawing || !connected || !socket || !roomId || tool !== 'pen') return
 
     const stage = e.target.getStage()
     const point = stage.getPointerPosition()
@@ -464,7 +561,7 @@ const Page = () => {
     setStrokes(prev => {
       const updated = [...prev]
       const lastStroke = updated[updated.length - 1]
-      if (lastStroke && lastStroke.userId === socketId) {
+      if (lastStroke && lastStroke.userId === socketId && lastStroke.strokeId === currentStrokeId) {
         // Create new points array instead of mutating
         updated[updated.length - 1] = {
           ...lastStroke,
@@ -481,38 +578,70 @@ const Page = () => {
       y: point.y,
       color: selectedColor,
       userId: socketId,
-      isDrawing: true
+      isDrawing: true,
+      strokeId: currentStrokeId
     })
   }
 
   const handleMouseUp = () => {
-    if (!isDrawing || !connected || !socket || !roomId) return
+    if (!isDrawing || !connected || !socket || !roomId || tool !== 'pen') return
 
     setIsDrawing(false)
     setCurrentStroke([])
+
+    // Mark stroke as complete
+    setStrokes(prev => {
+      const updated = [...prev]
+      const lastStroke = updated[updated.length - 1]
+      if (lastStroke && lastStroke.userId === socketId && lastStroke.strokeId === currentStrokeId) {
+        updated[updated.length - 1] = {
+          ...lastStroke,
+          isComplete: true
+        }
+      }
+      return updated
+    })
 
     // Emit draw end with roomId
     socket.emit('drawEnd', {
       roomId,
       userId: socketId
     })
+
+    setCurrentStrokeId(null)
+  }
+
+  const handleClearBoard = () => {
+    if (!connected || !socket || !roomId) return
+
+    socket.emit('clear_board', { roomId })
+    // Optimistically clear local state
+    setStrokes([])
   }
 
   // Room selection UI
   if (roomMode !== 'drawing') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen p-4 ">
-        <div className="mb-4 flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-            <span className="text-sm font-medium text-white">
-              {connected ? 'Connected' : 'Disconnected'}
-            </span>
-          </div>
+      <div className="flex flex-col items-center  min-h-screen p-4 ">
+
+        <div className="my-10 max-w-md text-center">
+          <h1 className="text-6xl font-bold bg-gradient-to-r from-yellow-600 via-green-400 to-red-400 bg-clip-text text-transparent">
+            DOODLES
+          </h1>
+          <p className="mt-3 text-gray-400 md:text-lg">
+            Draw, guess, and compete with friends in this fast-paced real-time doodle game.
+          </p>
         </div>
 
         <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
-          <h1 className="text-2xl font-bold mb-6 text-center text-gray-800">Drawing Room</h1>
+          <div className="mb-4 flex items-center justify-center gap-4">
+            <div className="flex items-center gap-2">
+              <div className={`w-3 h-3 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span className="text-sm font-medium ">
+                {connected ? 'Connected' : 'Disconnected'}
+              </span>
+            </div>
+          </div>
 
           {roomError && (
             <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
@@ -668,11 +797,22 @@ const Page = () => {
                   if (stage) {
                     const point = stage.getPointerPosition()
                     if (point) {
-                      const syntheticEvent = {
-                        ...e,
-                        target: stage
+                      if (tool === 'eraser') {
+                        const clickedStroke = findStrokeAtPoint(point.x, point.y)
+                        if (clickedStroke && clickedStroke.strokeId && socket && roomId) {
+                          socket.emit('erase_stroke', {
+                            roomId,
+                            strokeId: clickedStroke.strokeId
+                          })
+                          setStrokes(prev => prev.filter(s => s.strokeId !== clickedStroke.strokeId))
+                        }
+                      } else {
+                        const syntheticEvent = {
+                          ...e,
+                          target: stage
+                        }
+                        handleMouseDown(syntheticEvent as any)
                       }
-                      handleMouseDown(syntheticEvent as any)
                     }
                   }
                 }}
@@ -694,12 +834,12 @@ const Page = () => {
                 onMouseUp={handleMouseUp}
                 onTouchEnd={handleMouseUp}
                 onMouseLeave={handleMouseUp}
-                className='border-2 border-gray-300 rounded cursor-crosshair'
+                className={`border-2 border-gray-300 rounded ${tool === 'eraser' ? 'cursor-grab' : 'cursor-crosshair'}`}
               >
                 <Layer>
                   {strokes.map((stroke, index) => (
                     <Line
-                      key={index}
+                      key={stroke.strokeId || index}
                       points={stroke.points}
                       stroke={stroke.color}
                       strokeWidth={3}
@@ -715,24 +855,63 @@ const Page = () => {
           </div>
         </div>
 
-        {/* Color Picker - Below Canvas */}
-        {/* <div className='bg-white border-t border-gray-200 p-3 flex-shrink-0'>
-          <h3 className="text-xs font-semibold mb-2 text-gray-700">Color:</h3>
-          <div className="flex gap-2 flex-wrap justify-center">
-            {colors.map((color) => (
+        {/* Color Picker and Tools - Below Canvas */}
+        <div className='bg-white border-t border-gray-200 p-3 flex-shrink-0'>
+          <div className="flex gap-2 flex-wrap justify-center items-center">
+            {/* Tool Selection */}
+            <div className="flex gap-2 mr-2">
               <button
-                key={color}
-                onClick={() => setSelectedColor(color)}
-                className={`w-8 h-8 rounded border-2 transition-all ${selectedColor === color
-                  ? 'border-gray-800 scale-110'
+                onClick={() => setTool('pen')}
+                className={`p-2 rounded border-2 transition-all ${tool === 'pen'
+                  ? 'border-blue-500 bg-blue-50'
                   : 'border-gray-300 hover:border-gray-500'
                   }`}
-                style={{ backgroundColor: color }}
-                title={color}
-              />
-            ))}
+                title="Pen Tool"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 19l7-7 3 3-7 7-3-3z" />
+                  <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+                  <path d="M2 2l7.586 7.586" />
+                  <circle cx="11" cy="11" r="2" />
+                </svg>
+              </button>
+              <button
+                onClick={() => setTool('eraser')}
+                className={`p-2 rounded border-2 transition-all ${tool === 'eraser'
+                  ? 'border-red-500 bg-red-50'
+                  : 'border-gray-300 hover:border-gray-500'
+                  }`}
+                title="Eraser Tool"
+              >
+                <Eraser size={20} />
+              </button>
+              <button
+                onClick={handleClearBoard}
+                className="p-2 rounded border-2 border-gray-300 hover:border-red-500 hover:bg-red-50 transition-all"
+                title="Clear Board"
+              >
+                <Trash2 size={20} />
+              </button>
+            </div>
+            {/* Color Picker */}
+            {tool === 'pen' && (
+              <>
+                {colors.map((color) => (
+                  <button
+                    key={color}
+                    onClick={() => setSelectedColor(color)}
+                    className={`w-8 h-8 rounded border-2 transition-all ${selectedColor === color
+                      ? 'border-gray-800 scale-110'
+                      : 'border-gray-300 hover:border-gray-500'
+                      }`}
+                    style={{ backgroundColor: color }}
+                    title={color}
+                  />
+                ))}
+              </>
+            )}
           </div>
-        </div> */}
+        </div>
       </div>
       <div className='flex-1 grid grid-cols-2 border-t border-gray-200 h-[50%]'>
 
@@ -749,25 +928,25 @@ const Page = () => {
         {/* Players List - Bottom */}
         <div className='p-2  flex-shrink-0 overflow-y-auto' >
           <div className=' bg-white'>
-              {players.map((player,idx) => (
-                <div
-                  key={player.socketId}
-                  className={`flex items-center ${idx%2!=0?'bg-gray-200':''} gap-2 p-1 md:p-2
+            {players.map((player, idx) => (
+              <div
+                key={player.socketId}
+                className={`flex items-center ${idx % 2 != 0 ? 'bg-gray-200' : ''} gap-2 p-1 md:p-2
                   }`}
-                >
-                  <img
-                    src={player.image}
-                    alt={player.username}
-                    className="w-10 h-10 rounded flex-shrink-0"
-                  />
-                  <span className="text-sm font-medium text-gray-700 truncate">
-                    {player.username}
-                    {player.socketId === socketId && (
-                      <span className="text-blue-500 ml-1">(You)</span>
-                    )}
-                  </span>
-                </div>
-              ))}
+              >
+                <img
+                  src={player.image}
+                  alt={player.username}
+                  className="w-10 h-10 rounded flex-shrink-0"
+                />
+                <span className="text-sm font-medium text-gray-700 truncate">
+                  {player.username}
+                  {player.socketId === socketId && (
+                    <span className="text-blue-500 ml-1">(You)</span>
+                  )}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       </div>

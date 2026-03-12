@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "websocket-implementation": {
+      "source": "aj-geddes/useful-ai-prompts",
+      "sourceType": "github",
+      "computedHash": "8428e4c544498f597c7f064b08d4f6066c73052ae1b99eca1f506a80b31af77c"
+    }
+  }
+}
