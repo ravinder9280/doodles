@@ -1,5 +1,194 @@
 import { Server, Socket } from "socket.io"
 import { roomManager } from "../rooms/roomManager.js"
+import { getRandomWord } from "../constant/words.js"
+
+/**
+ * Start a new round - select drawer, pick word, start timer
+ */
+function startRound(roomId: string, io: Server): void {
+  const room = roomManager.getRoom(roomId)
+  if (!room || !room.gameStarted) {
+    return
+  }
+
+  // Clear previous strokes
+  roomManager.clearRoomStrokes(roomId)
+  io.to(roomId).emit("clear_canvas", {})
+
+  // Reset all guesses
+  roomManager.resetRoundGuesses(roomId)
+
+  // Pick a word from the pool
+  if (room.wordPool.length === 0) {
+    // Fallback if pool is empty
+    room.currentWord = getRandomWord()
+  } else {
+    room.currentWord = room.wordPool.pop() || getRandomWord()
+  }
+
+  // Get current drawer
+  const drawer = roomManager.getCurrentDrawer(roomId)
+  if (!drawer) {
+    console.error(`No drawer found for room ${roomId}`)
+    return
+  }
+
+  // Set round start time and phase
+  room.roundStartTime = Date.now()
+  room.gamePhase = 'drawing'
+
+  // Clear any existing timer
+  if (room.roundTimerRef) {
+    clearTimeout(room.roundTimerRef)
+    room.roundTimerRef = null
+  }
+
+  // Emit drawer selected to all
+  io.to(roomId).emit("drawer_selected", {
+    drawerSocketId: drawer.socketId,
+    drawerUsername: drawer.username,
+    round: room.round,
+    timeLimit: room.roundDurationMs / 1000
+  })
+
+  // Emit word to drawer only
+  io.to(drawer.socketId).emit("your_word", {
+    word: room.currentWord
+  })
+
+  // Create masked word hint for others
+  const wordLength = room.currentWord.length
+  const hint = "_ ".repeat(wordLength).trim()
+
+  // Emit word hint to all non-drawers
+  room.players.forEach(player => {
+    if (player.socketId !== drawer.socketId) {
+      io.to(player.socketId).emit("word_hint", {
+        hint,
+        wordLength
+      })
+    }
+  })
+
+  // Start timer
+  let secondsLeft = Math.floor(room.roundDurationMs / 1000)
+
+  // Emit initial timer update
+  io.to(roomId).emit("timer_update", { secondsLeft })
+
+  // Set up interval to emit timer updates every second
+  const timerInterval = setInterval(() => {
+    secondsLeft--
+    if (secondsLeft >= 0) {
+      io.to(roomId).emit("timer_update", { secondsLeft })
+    }
+  }, 1000)
+
+  // Set up timeout to end round when time expires
+  room.roundTimerRef = setTimeout(() => {
+    clearInterval(timerInterval)
+    endRound(roomId, io, 'time_up')
+  }, room.roundDurationMs) as any
+
+  console.log(`Round ${room.round} started in room ${roomId}, drawer: ${drawer.username}, word: ${room.currentWord}`)
+}
+
+/**
+ * End the current round
+ */
+function endRound(roomId: string, io: Server, reason: 'time_up' | 'all_guessed'): void {
+  const room = roomManager.getRoom(roomId)
+  if (!room || !room.gameStarted) {
+    return
+  }
+
+  // Clear timer
+  if (room.roundTimerRef) {
+    clearTimeout(room.roundTimerRef)
+    room.roundTimerRef = null
+  }
+
+  room.gamePhase = 'round_end'
+
+  // Get final scores
+  const players = roomManager.getRoomPlayers(roomId)
+  const scores = players.map(p => ({ socketId: p.socketId, username: p.username, score: p.score }))
+
+  // Emit round end to all
+  io.to(roomId).emit("round_end", {
+    word: room.currentWord,
+    scores,
+    round: room.round,
+    reason
+  })
+
+  console.log(`Round ${room.round} ended in room ${roomId}, reason: ${reason}`)
+
+  // Wait 3 seconds, then start next round or end game
+  setTimeout(() => {
+    const updatedRoom = roomManager.getRoom(roomId)
+    if (!updatedRoom || !updatedRoom.gameStarted) {
+      return
+    }
+
+    // Check if game should end
+    const roundIncremented = roomManager.advanceDrawer(roomId)
+    const finalRoom = roomManager.getRoom(roomId)
+
+    if (!finalRoom) {
+      return
+    }
+
+    if (roundIncremented && finalRoom.round > finalRoom.maxRounds) {
+      // Game over
+      endGame(roomId, io)
+    } else {
+      // Start next round
+      startRound(roomId, io)
+    }
+  }, 3000)
+}
+
+/**
+ * End the game
+ */
+function endGame(roomId: string, io: Server): void {
+  const room = roomManager.getRoom(roomId)
+  if (!room) {
+    return
+  }
+
+  // Clear timer
+  if (room.roundTimerRef) {
+    clearTimeout(room.roundTimerRef)
+    room.roundTimerRef = null
+  }
+
+  // Get final scores
+  const players = roomManager.getRoomPlayers(roomId)
+  const scores = players.map(p => ({ socketId: p.socketId, username: p.username, score: p.score }))
+
+  // Find winner(s)
+  const maxScore = Math.max(...scores.map(s => s.score))
+  const winners = scores.filter(s => s.score === maxScore)
+
+  // Reset game state
+  room.gameStarted = false
+  room.gamePhase = 'waiting'
+  room.round = 0
+  room.currentDrawerIndex = 0
+  room.currentWord = ''
+  room.wordPool = []
+
+  // Emit game over
+  io.to(roomId).emit("game_over", {
+    scores,
+    winner: winners.length === 1 ? winners[0] : null,
+    winners: winners.length > 1 ? winners : null
+  })
+
+  console.log(`Game ended in room ${roomId}`)
+}
 
 export default function socketHandler(io: Server) {
   io.on("connection", (socket: Socket) => {
@@ -37,7 +226,15 @@ export default function socketHandler(io: Server) {
 
         // Join new room
         socket.join(roomId)
-        roomManager.addPlayerToRoom(roomId, { socketId: socket.id, username, image })
+        // First player is the host
+        roomManager.addPlayerToRoom(roomId, {
+          socketId: socket.id,
+          username,
+          image,
+          score: 0,
+          guessedCorrectly: false,
+          isHost: true
+        })
         socket.data.currentRoom = roomId
 
         // Get all players in the room
@@ -87,7 +284,15 @@ export default function socketHandler(io: Server) {
 
       // Join new room
       socket.join(roomId)
-      roomManager.addPlayerToRoom(roomId, { socketId: socket.id, username, image })
+      // New joiners are not hosts
+      roomManager.addPlayerToRoom(roomId, {
+        socketId: socket.id,
+        username,
+        image,
+        score: 0,
+        guessedCorrectly: false,
+        isHost: false
+      })
       socket.data.currentRoom = roomId
 
       // Get existing strokes for the room
@@ -96,13 +301,137 @@ export default function socketHandler(io: Server) {
       // Get all players in the room
       const players = roomManager.getRoomPlayers(roomId)
 
-      // Send room joined confirmation with existing strokes and players
-      socket.emit("room_joined", { roomId, strokes, players })
+      // Get room to check game state
+      const room = roomManager.getRoom(roomId)
+
+      // Prepare game state if game is active
+      let gameState: any = null
+      if (room && room.gameStarted && room.gamePhase === 'drawing') {
+        const drawer = roomManager.getCurrentDrawer(roomId)
+        const isDrawer = drawer && drawer.socketId === socket.id
+
+        // Calculate time remaining
+        const elapsed = Date.now() - room.roundStartTime
+        const remaining = room.roundDurationMs - elapsed
+        const secondsLeft = Math.max(0, Math.floor(remaining / 1000))
+
+        // Create word hint for non-drawers
+        let wordHint = ''
+        if (!isDrawer && drawer) {
+          const wordLength = room.currentWord.length
+          wordHint = "_ ".repeat(wordLength).trim()
+        }
+
+        gameState = {
+          gameStarted: true,
+          drawerSocketId: drawer?.socketId || '',
+          drawerUsername: drawer?.username || '',
+          wordHint: wordHint,
+          wordLength: room.currentWord.length,
+          secondsLeft: secondsLeft,
+          round: room.round,
+          maxRounds: room.maxRounds,
+          isDrawer: isDrawer
+        }
+
+        // If drawer, send the word
+        if (isDrawer) {
+          socket.emit("your_word", { word: room.currentWord })
+        } else if (wordHint) {
+          socket.emit("word_hint", { hint: wordHint, wordLength: room.currentWord.length })
+        }
+      }
+
+      // Send room joined confirmation with existing strokes, players, and game state
+      socket.emit("room_joined", {
+        roomId,
+        strokes,
+        players: players.map(p => ({
+          socketId: p.socketId,
+          username: p.username,
+          image: p.image,
+          score: p.score,
+          isHost: p.isHost
+        })),
+        gameState
+      })
 
       // Notify all players in the room about the update
       io.to(roomId).emit("players_updated", { players })
 
       console.log(`User ${socket.id} joined room ${roomId}`)
+    })
+
+    // Start game event
+    socket.on("start_game", (data: { roomId: string; maxRounds?: number }) => {
+      const { roomId, maxRounds } = data
+
+      if (!roomId) {
+        socket.emit("room_error", { message: "Room ID is required" })
+        return
+      }
+
+      const room = roomManager.getRoom(roomId)
+      if (!room) {
+        socket.emit("room_error", { message: "Room not found" })
+        return
+      }
+
+      // Check if user is in the room
+      const player = room.players.find(p => p.socketId === socket.id)
+      if (!player) {
+        socket.emit("room_error", { message: "You are not in this room" })
+        return
+      }
+
+      // Check if user is the host
+      if (!player.isHost) {
+        socket.emit("room_error", { message: "Only the host can start the game" })
+        return
+      }
+
+      // Check if game is already started
+      if (room.gameStarted) {
+        socket.emit("room_error", { message: "Game is already in progress" })
+        return
+      }
+
+      // Check minimum players
+      if (room.players.length < 2) {
+        socket.emit("room_error", { message: "Need at least 2 players to start" })
+        return
+      }
+
+      // Initialize game
+      const rounds = maxRounds || 3
+      if (!roomManager.initGame(roomId, rounds)) {
+        socket.emit("room_error", { message: "Failed to start game" })
+        return
+      }
+
+      const updatedRoom = roomManager.getRoom(roomId)
+      if (!updatedRoom) {
+        return
+      }
+
+      // Emit game started to all players
+      const players = roomManager.getRoomPlayers(roomId)
+      io.to(roomId).emit("game_started", {
+        round: updatedRoom.round,
+        maxRounds: updatedRoom.maxRounds,
+        players: players.map(p => ({
+          socketId: p.socketId,
+          username: p.username,
+          image: p.image,
+          score: p.score,
+          isHost: p.isHost
+        }))
+      })
+
+      // Start first round
+      startRound(roomId, io)
+
+      console.log(`Game started in room ${roomId} by ${player.username}`)
     })
 
     // Draw event - modified to be room-based
@@ -121,6 +450,14 @@ export default function socketHandler(io: Server) {
       const room = roomManager.getRoom(roomId)
       if (!room || !room.players.some(player => player.socketId === socket.id)) {
         return
+      }
+
+      // If game is started, only drawer can draw
+      if (room.gameStarted && room.gamePhase === 'drawing') {
+        const drawer = room.players[room.currentDrawerIndex]
+        if (!drawer || socket.id !== drawer.socketId) {
+          return // Silently reject non-drawer attempts
+        }
       }
 
       // Store stroke in room
@@ -156,6 +493,19 @@ export default function socketHandler(io: Server) {
         return
       }
 
+      const room = roomManager.getRoom(roomId)
+      if (!room) {
+        return
+      }
+
+      // If game is started, only drawer can draw
+      if (room.gameStarted && room.gamePhase === 'drawing') {
+        const drawer = room.players[room.currentDrawerIndex]
+        if (!drawer || socket.id !== drawer.socketId) {
+          return // Silently reject non-drawer attempts
+        }
+      }
+
       // Broadcast to all users in the room (except sender)
       socket.to(roomId).emit("drawEnd", { userId })
     })
@@ -176,6 +526,14 @@ export default function socketHandler(io: Server) {
       const room = roomManager.getRoom(roomId)
       if (!room || !room.players.some(player => player.socketId === socket.id)) {
         return
+      }
+
+      // If game is started, only drawer can clear
+      if (room.gameStarted && room.gamePhase === 'drawing') {
+        const drawer = room.players[room.currentDrawerIndex]
+        if (!drawer || socket.id !== drawer.socketId) {
+          return // Silently reject non-drawer attempts
+        }
       }
 
       // Clear strokes in room
@@ -215,11 +573,104 @@ export default function socketHandler(io: Server) {
         message: message.trim(),
         timestamp: Date.now()
       }
-      if (chatData.message.toLowerCase() === room.word.toLowerCase()) {
-        io.to(roomId).emit("correct_guess", chatData
 
-        )
+      // Handle guess detection if game is active
+      if (room.gameStarted && room.gamePhase === 'drawing') {
+        const drawer = room.players[room.currentDrawerIndex]
+
+        // Ignore guesses from the drawer
+        if (drawer && socket.id === drawer.socketId) {
+          // Drawer can't guess, just broadcast as normal chat
+          io.to(roomId).emit("chat_message", chatData)
+          console.log(`Chat message from drawer ${resolvedUser} in room ${roomId}: ${message}`)
+          return
+        }
+
+        // Find the player who sent the message
+        const guessingPlayer = room.players.find(p => p.socketId === socket.id)
+        if (!guessingPlayer) {
+          return
+        }
+
+        // Ignore if player already guessed correctly
+        if (guessingPlayer.guessedCorrectly) {
+          // Still broadcast the message, but don't process as guess
+          io.to(roomId).emit("chat_message", chatData)
+          return
+        }
+
+        // Check if message matches the word
+        if (chatData.message.toLowerCase() === room.currentWord.toLowerCase()) {
+          // Mark player as having guessed correctly
+          guessingPlayer.guessedCorrectly = true
+
+          // Calculate points based on time remaining
+          const elapsed = Date.now() - room.roundStartTime
+          const remaining = room.roundDurationMs - elapsed
+          const secondsLeft = Math.max(0, Math.floor(remaining / 1000))
+
+          // Award points: more points for faster guesses
+          // Base points: 100, plus time bonus (up to 50 points)
+          const timeBonus = Math.floor(secondsLeft / 2) // Up to 40 points if 80 seconds left
+          const points = 100 + timeBonus
+
+          roomManager.awardPoints(roomId, socket.id, points)
+
+          // Emit score update
+          const players = roomManager.getRoomPlayers(roomId)
+          io.to(roomId).emit("score_update", {
+            players: players.map(p => ({
+              socketId: p.socketId,
+              username: p.username,
+              image: p.image,
+              score: p.score,
+              isHost: p.isHost
+            }))
+          })
+
+          // Emit system message about correct guess
+          const systemMessage = {
+            user: "System",
+            userId: "system",
+            message: `${resolvedUser} guessed the word!`,
+            timestamp: Date.now()
+          }
+          io.to(roomId).emit("chat_message", systemMessage)
+          io.to(roomId).emit("correct_guess", chatData)
+
+          console.log(`${resolvedUser} guessed correctly in room ${roomId}, awarded ${points} points`)
+
+          // Check if all non-drawers have guessed
+          if (roomManager.allNonDrawersGuessed(roomId)) {
+            // Award drawer bonus points (50 points)
+            if (drawer) {
+              roomManager.awardPoints(roomId, drawer.socketId, 50)
+
+              // Emit updated scores
+              const updatedPlayers = roomManager.getRoomPlayers(roomId)
+              io.to(roomId).emit("score_update", {
+                players: updatedPlayers.map(p => ({
+                  socketId: p.socketId,
+                  username: p.username,
+                  image: p.image,
+                  score: p.score,
+                  isHost: p.isHost
+                }))
+              })
+            }
+
+            // Clear timer and end round
+            if (room.roundTimerRef) {
+              clearTimeout(room.roundTimerRef)
+              room.roundTimerRef = null
+            }
+
+            endRound(roomId, io, 'all_guessed')
+            return
+          }
+        }
       }
+
       // Broadcast to all users in the room (including sender)
       io.to(roomId).emit("chat_message", chatData)
 
@@ -232,8 +683,58 @@ export default function socketHandler(io: Server) {
 
       if (roomId && socket.data.currentRoom === roomId) {
         socket.leave(roomId)
-        roomManager.removePlayerFromRoom(roomId, socket.id)
-        socket.data.currentRoom = null
+        const room = roomManager.getRoom(roomId)
+
+        if (room && room.gameStarted) {
+          const drawer = room.players[room.currentDrawerIndex]
+          const wasDrawer = drawer && drawer.socketId === socket.id
+
+          // Remove player
+          roomManager.removePlayerFromRoom(roomId, socket.id)
+          socket.data.currentRoom = null
+
+          const updatedRoom = roomManager.getRoom(roomId)
+          if (!updatedRoom) {
+            socket.emit("room_left", { roomId })
+            return
+          }
+
+          // Handle game state if drawer left
+          if (wasDrawer) {
+            // Clear timer
+            if (updatedRoom.roundTimerRef) {
+              clearTimeout(updatedRoom.roundTimerRef)
+              updatedRoom.roundTimerRef = null
+            }
+
+            // Check if enough players remain
+            if (updatedRoom.players.length < 2) {
+              endGame(roomId, io)
+            } else {
+              // Adjust drawer index if needed
+              if (updatedRoom.currentDrawerIndex >= updatedRoom.players.length) {
+                updatedRoom.currentDrawerIndex = 0
+                updatedRoom.round++
+              }
+
+              // Start new round immediately
+              startRound(roomId, io)
+            }
+          } else {
+            // Non-drawer left - check if all remaining non-drawers have guessed
+            if (roomManager.allNonDrawersGuessed(roomId)) {
+              if (updatedRoom.roundTimerRef) {
+                clearTimeout(updatedRoom.roundTimerRef)
+                updatedRoom.roundTimerRef = null
+              }
+              endRound(roomId, io, 'all_guessed')
+            }
+          }
+        } else {
+          // Game not started, just remove player
+          roomManager.removePlayerFromRoom(roomId, socket.id)
+          socket.data.currentRoom = null
+        }
 
         // Notify remaining players in the room
         if (roomManager.roomExists(roomId)) {
@@ -254,8 +755,57 @@ export default function socketHandler(io: Server) {
       // Remove from current room
       if (socket.data.currentRoom) {
         const roomId = socket.data.currentRoom
-        socket.leave(roomId)
-        roomManager.removePlayerFromRoom(roomId, socket.id)
+        const room = roomManager.getRoom(roomId)
+
+        if (room && room.gameStarted) {
+          const drawer = room.players[room.currentDrawerIndex]
+          const wasDrawer = drawer && drawer.socketId === socket.id
+
+          socket.leave(roomId)
+          roomManager.removePlayerFromRoom(roomId, socket.id)
+
+          const updatedRoom = roomManager.getRoom(roomId)
+          if (!updatedRoom) {
+            socket.data.currentRoom = null
+            return
+          }
+
+          // Handle game state if drawer disconnected
+          if (wasDrawer) {
+            // Clear timer
+            if (updatedRoom.roundTimerRef) {
+              clearTimeout(updatedRoom.roundTimerRef)
+              updatedRoom.roundTimerRef = null
+            }
+
+            // Check if enough players remain
+            if (updatedRoom.players.length < 2) {
+              endGame(roomId, io)
+            } else {
+              // Adjust drawer index if needed
+              if (updatedRoom.currentDrawerIndex >= updatedRoom.players.length) {
+                updatedRoom.currentDrawerIndex = 0
+                updatedRoom.round++
+              }
+
+              // Start new round immediately
+              startRound(roomId, io)
+            }
+          } else {
+            // Non-drawer disconnected - check if all remaining non-drawers have guessed
+            if (roomManager.allNonDrawersGuessed(roomId)) {
+              if (updatedRoom.roundTimerRef) {
+                clearTimeout(updatedRoom.roundTimerRef)
+                updatedRoom.roundTimerRef = null
+              }
+              endRound(roomId, io, 'all_guessed')
+            }
+          }
+        } else {
+          // Game not started, just remove player
+          socket.leave(roomId)
+          roomManager.removePlayerFromRoom(roomId, socket.id)
+        }
 
         // Notify remaining players in the room
         if (roomManager.roomExists(roomId)) {

@@ -22,6 +22,8 @@ interface PlayerData {
   socketId: string
   username: string
   image: string
+  score?: number
+  isHost?: boolean
 }
 
 type RoomMode = 'create' | 'join' | 'drawing'
@@ -54,6 +56,16 @@ const Page = () => {
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([])
+
+  // Game state
+  const [gameStarted, setGameStarted] = useState(false)
+  const [isDrawer, setIsDrawer] = useState(false)
+  const [currentDrawerSocketId, setCurrentDrawerSocketId] = useState<string>('')
+  const [wordHint, setWordHint] = useState<string>('')   // e.g. "_ _ _ _ _"
+  const [secretWord, setSecretWord] = useState<string>('')   // only if isDrawer
+  const [timeLeft, setTimeLeft] = useState<number>(80)
+  const [round, setRound] = useState<number>(1)
+  const [maxRounds, setMaxRounds] = useState<number>(3)
 
   // Canvas size state for mobile layout
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
@@ -155,13 +167,30 @@ const Page = () => {
     })
 
     // Room joined event
-    newSocket.on('room_joined', (data: { roomId: string; strokes: any[]; players: PlayerData[] }) => {
+    newSocket.on('room_joined', (data: { roomId: string; strokes: any[]; players: PlayerData[]; gameState?: any }) => {
       console.log('Room joined:', data.roomId)
       setRoomId(data.roomId)
       setRoomMode('drawing')
       setRoomError('')
       setPlayers(data.players || [])
       setShowUsernameInput(false)
+
+      // Handle game state if game is active
+      if (data.gameState) {
+        setGameStarted(true)
+        setRound(data.gameState.round || 1)
+        setMaxRounds(data.gameState.maxRounds || 3)
+        setCurrentDrawerSocketId(data.gameState.drawerSocketId || '')
+        setIsDrawer(data.gameState.isDrawer || false)
+        setWordHint(data.gameState.wordHint || '')
+        setTimeLeft(data.gameState.secondsLeft || 80)
+      } else {
+        setGameStarted(false)
+        setIsDrawer(false)
+        setWordHint('')
+        setSecretWord('')
+        setTimeLeft(80)
+      }
 
       // Reconstruct strokes from room data
       if (data.strokes && data.strokes.length > 0) {
@@ -235,10 +264,109 @@ const Page = () => {
 
 
     newSocket.on("correct_guess", (chatData: ChatMessage) => {
-      toast.success(`${chatData.user} guesses the word`)
+      toast.success(`${chatData.user} guessed the word!`)
+    })
 
-    }
-    )
+    // Game started event
+    newSocket.on('game_started', (data: { round: number; maxRounds: number; players: PlayerData[] }) => {
+      console.log('Game started:', data)
+      setGameStarted(true)
+      setRound(data.round)
+      setMaxRounds(data.maxRounds)
+      setPlayers(data.players || [])
+      setIsDrawer(false)
+      setWordHint('')
+      setSecretWord('')
+      setTimeLeft(80)
+    })
+
+    // Drawer selected event
+    newSocket.on('drawer_selected', (data: { drawerSocketId: string; drawerUsername: string; round: number; timeLimit: number }) => {
+      console.log('Drawer selected:', data)
+      setCurrentDrawerSocketId(data.drawerSocketId)
+      setIsDrawer(data.drawerSocketId === newSocket.id)
+      setRound(data.round)
+      setTimeLeft(data.timeLimit)
+      setWordHint('')
+      setSecretWord('')
+    })
+
+    // Your word event (drawer only)
+    newSocket.on('your_word', (data: { word: string }) => {
+      console.log('Your word:', data.word)
+      setSecretWord(data.word)
+      setWordHint('')
+    })
+
+    // Word hint event (non-drawers)
+    newSocket.on('word_hint', (data: { hint: string; wordLength: number }) => {
+      console.log('Word hint:', data)
+      setWordHint(data.hint)
+      setSecretWord('')
+    })
+
+    // Timer update event
+    newSocket.on('timer_update', (data: { secondsLeft: number }) => {
+      setTimeLeft(data.secondsLeft)
+    })
+
+    // Round end event
+    newSocket.on('round_end', (data: { word: string; scores: any[]; round: number; reason: string }) => {
+      console.log('Round ended:', data)
+      toast.info(`Round ${data.round} ended! The word was: ${data.word}`)
+      setIsDrawer(false)
+      setSecretWord('')
+      setWordHint('')
+
+      // Update player scores
+      if (data.scores) {
+        setPlayers(prev => prev.map(p => {
+          const scoreData = data.scores.find((s: any) => s.socketId === p.socketId)
+          return scoreData ? { ...p, score: scoreData.score } : p
+        }))
+      }
+    })
+
+    // Game over event
+    newSocket.on('game_over', (data: { scores: any[]; winner: any; winners: any[] }) => {
+      console.log('Game over:', data)
+      if (data.winner) {
+        toast.success(`Game Over! ${data.winner.username} wins with ${data.winner.score} points!`)
+      } else if (data.winners && data.winners.length > 0) {
+        const winnerNames = data.winners.map((w: any) => w.username).join(', ')
+        toast.success(`Game Over! Tie between: ${winnerNames}`)
+      } else {
+        toast.info('Game Over!')
+      }
+
+      setGameStarted(false)
+      setIsDrawer(false)
+      setSecretWord('')
+      setWordHint('')
+      setTimeLeft(80)
+
+      // Update final scores
+      if (data.scores) {
+        setPlayers(prev => prev.map(p => {
+          const scoreData = data.scores.find((s: any) => s.socketId === p.socketId)
+          return scoreData ? { ...p, score: scoreData.score } : p
+        }))
+      }
+    })
+
+    // Clear canvas event
+    newSocket.on('clear_canvas', () => {
+      console.log('Canvas cleared')
+      setStrokes([])
+      setCurrentStroke([])
+      setIsDrawing(false)
+    })
+
+    // Score update event
+    newSocket.on('score_update', (data: { players: PlayerData[] }) => {
+      console.log('Score updated:', data)
+      setPlayers(data.players || [])
+    })
 
 
     // Draw event - modified to handle room-based drawing
@@ -442,6 +570,7 @@ const Page = () => {
 
   const handleMouseDown = (e: any) => {
     if (!connected || !socket || !roomId) return
+    if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
     const stage = e.target.getStage()
     const point = stage.getPointerPosition()
@@ -472,6 +601,7 @@ const Page = () => {
 
   const handleMouseMove = (e: any) => {
     if (!isDrawing || !connected || !socket || !roomId) return
+    if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
     const stage = e.target.getStage()
     const point = stage.getPointerPosition()
@@ -505,6 +635,7 @@ const Page = () => {
 
   const handleMouseUp = () => {
     if (!isDrawing || !connected || !socket || !roomId) return
+    if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
     setIsDrawing(false)
     setCurrentStroke([])
@@ -654,11 +785,34 @@ const Page = () => {
             <span className="text-xs font-medium text-gray-700">
               {connected ? 'Connected' : 'Disconnected'}
             </span>
+            {gameStarted && (
+              <>
+                <span className="text-xs text-gray-500">|</span>
+                <span className="text-xs font-medium text-gray-700">
+                  Round {round}/{maxRounds}
+                </span>
+                <span className="text-xs text-gray-500">|</span>
+                <span className="text-xs font-medium text-gray-700">
+                  Time: {timeLeft}s
+                </span>
+              </>
+            )}
           </div>
           {roomId && (
             <div className="flex items-center gap-2">
-             
               <span className="text-xs text-gray-600">Room: {roomId}</span>
+              {!gameStarted && players.find(p => p.socketId === socketId)?.isHost && (
+                <button
+                  onClick={() => {
+                    if (socket && roomId) {
+                      socket.emit('start_game', { roomId, maxRounds: 3 })
+                    }
+                  }}
+                  className="px-3 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600 font-medium"
+                >
+                  Start Game
+                </button>
+              )}
               <button
                 onClick={copyRoomId}
                 className="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
@@ -674,6 +828,22 @@ const Page = () => {
             </div>
           )}
         </div>
+        {/* Word hint / secret word display */}
+        {gameStarted && (
+          <div className="bg-blue-50 border-b border-blue-200 p-3 text-center">
+            {isDrawer ? (
+              <div>
+                <p className="text-sm font-medium text-gray-700 mb-1">Your word to draw:</p>
+                <p className="text-2xl font-bold text-blue-600">{secretWord || 'Loading...'}</p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-sm font-medium text-gray-700 mb-1">Guess the word:</p>
+                <p className="text-2xl font-bold text-gray-800">{wordHint || '_ _ _ _ _'}</p>
+              </div>
+            )}
+          </div>
+        )}
         <div
           ref={canvasContainerRef}
           className="flex items-center justify-center w-full h-full bg-gray-100 overflow-hidden"
@@ -718,7 +888,7 @@ const Page = () => {
                 onMouseUp={handleMouseUp}
                 onTouchEnd={handleMouseUp}
                 onMouseLeave={handleMouseUp}
-                className='border-2 border-gray-300 rounded cursor-crosshair'
+                className={`border-2 border-gray-300 rounded ${gameStarted && !isDrawer ? 'cursor-not-allowed' : 'cursor-crosshair'}`}
               >
                 <Layer>
                   {strokes.map((stroke, index) => (
@@ -780,25 +950,44 @@ const Page = () => {
         {/* Players List - Bottom */}
         <div className='p-2  flex-shrink-0 overflow-y-auto' >
           <div className=' bg-white'>
-            {players.map((player, idx) => (
-              <div
-                key={player.socketId}
-                className={`flex items-center ${idx % 2 != 0 ? 'bg-gray-200' : ''} gap-2 p-1 md:p-2
-                  }`}
-              >
-                <img
-                  src={player.image}
-                  alt={player.username}
-                  className="w-10 h-10 rounded flex-shrink-0"
-                />
-                <span className="text-sm font-medium text-gray-700 truncate">
-                  {player.username}
-                  {player.socketId === socketId && (
-                    <span className="text-blue-500 ml-1">(You)</span>
+            {players.map((player, idx) => {
+              const isCurrentDrawer = gameStarted && player.socketId === currentDrawerSocketId
+              return (
+                <div
+                  key={player.socketId}
+                  className={`flex items-center justify-between ${idx % 2 != 0 ? 'bg-gray-200' : ''} gap-2 p-1 md:p-2 ${isCurrentDrawer ? 'bg-yellow-100 border-l-4 border-yellow-500' : ''}`}
+                >
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <img
+                      src={player.image}
+                      alt={player.username}
+                      className="w-10 h-10 rounded flex-shrink-0"
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-medium text-gray-700 truncate">
+                        {player.username}
+                        {player.socketId === socketId && (
+                          <span className="text-blue-500 ml-1">(You)</span>
+                        )}
+                        {isCurrentDrawer && (
+                          <span className="text-yellow-600 ml-1 font-bold">🎨 Drawing</span>
+                        )}
+                        {player.isHost && (
+                          <span className="text-purple-500 ml-1 text-xs">👑 Host</span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                  {gameStarted && (
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-sm font-bold text-gray-800">
+                        {player.score || 0} pts
+                      </span>
+                    </div>
                   )}
-                </span>
-              </div>
-            ))}
+                </div>
+              )
+            })}
           </div>
         </div>
       </div>

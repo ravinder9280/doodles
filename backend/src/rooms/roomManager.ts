@@ -1,3 +1,5 @@
+import { getRandomWords } from '../constant/words.js'
+
 export interface StrokeData {
   x: number
   y: number
@@ -10,6 +12,9 @@ export interface playerData {
   socketId: string
   username: string
   image: string
+  score: number
+  guessedCorrectly: boolean   // reset to false each round
+  isHost: boolean             // first player to create the room
 }
 
 export interface Room {
@@ -17,7 +22,16 @@ export interface Room {
   players: playerData[]  // Array of socket IDs
   strokes: StrokeData[]  // All drawing strokes
   createdAt: number  // Timestamp
-  word: string
+  currentWord: string           // rename from word for clarity
+  gameStarted: boolean
+  gamePhase: 'waiting' | 'picking' | 'drawing' | 'round_end' | 'game_over'
+  currentDrawerIndex: number   // index into players[]
+  round: number                // current round number (1-based)
+  maxRounds: number            // total rounds to play
+  roundStartTime: number       // Date.now() when round started
+  roundDurationMs: number      // e.g. 80_000
+  roundTimerRef: NodeJS.Timeout | null   // server timer handle (never sent to client)
+  wordPool: string[]           // shuffled words available this game
 }
 
 class RoomManager {
@@ -64,7 +78,16 @@ class RoomManager {
       players: [],
       strokes: [],
       createdAt: Date.now(),
-      word: 'apple'
+      currentWord: '',
+      gameStarted: false,
+      gamePhase: 'waiting',
+      currentDrawerIndex: 0,
+      round: 0,
+      maxRounds: 3,
+      roundStartTime: 0,
+      roundDurationMs: 80000, // 80 seconds
+      roundTimerRef: null,
+      wordPool: []
     }
     this.rooms.set(roomId, room)
     console.log(`Room created: ${roomId}`)
@@ -95,8 +118,17 @@ class RoomManager {
     }
 
     if (!room.players.some(player => player.socketId === playerData.socketId)) {
-      room.players.push(playerData)
-      console.log(`Player ${playerData.socketId} joined room ${roomId}`)
+      // Ensure all required fields are set
+      const fullPlayerData: playerData = {
+        socketId: playerData.socketId,
+        username: playerData.username,
+        image: playerData.image,
+        score: playerData.score ?? 0,
+        guessedCorrectly: playerData.guessedCorrectly ?? false,
+        isHost: playerData.isHost ?? false
+      }
+      room.players.push(fullPlayerData)
+      console.log(`Player ${fullPlayerData.socketId} joined room ${roomId}`)
     }
     return true
   }
@@ -182,6 +214,127 @@ class RoomManager {
    */
   getRoomCount(): number {
     return this.rooms.size
+  }
+
+  /**
+   * Initialize game - set gameStarted = true, reset scores, pick word pool
+   */
+  initGame(roomId: string, maxRounds: number = 3): boolean {
+    const room = this.rooms.get(roomId)
+    if (!room) {
+      return false
+    }
+
+    if (room.players.length < 2) {
+      console.log(`Cannot start game in room ${roomId}: need at least 2 players`)
+      return false
+    }
+
+    room.gameStarted = true
+    room.gamePhase = 'waiting'
+    room.maxRounds = maxRounds
+    room.round = 0
+    room.currentDrawerIndex = 0
+    room.wordPool = getRandomWords(maxRounds * room.players.length + 10) // Extra words for safety
+
+    // Reset all player scores and guesses
+    room.players.forEach(player => {
+      player.score = 0
+      player.guessedCorrectly = false
+    })
+
+    console.log(`Game initialized in room ${roomId} with ${maxRounds} rounds`)
+    return true
+  }
+
+  /**
+   * Reset all players' guessedCorrectly flag to false
+   */
+  resetRoundGuesses(roomId: string): boolean {
+    const room = this.rooms.get(roomId)
+    if (!room) {
+      return false
+    }
+
+    room.players.forEach(player => {
+      player.guessedCorrectly = false
+    })
+
+    return true
+  }
+
+  /**
+   * Award points to a player
+   */
+  awardPoints(roomId: string, socketId: string, points: number): boolean {
+    const room = this.rooms.get(roomId)
+    if (!room) {
+      return false
+    }
+
+    const player = room.players.find(p => p.socketId === socketId)
+    if (player) {
+      player.score += points
+      console.log(`Awarded ${points} points to ${player.username} in room ${roomId}`)
+      return true
+    }
+
+    return false
+  }
+
+  /**
+   * Check if all non-drawers have guessed correctly
+   */
+  allNonDrawersGuessed(roomId: string): boolean {
+    const room = this.rooms.get(roomId)
+    if (!room || !room.gameStarted) {
+      return false
+    }
+
+    const drawer = room.players[room.currentDrawerIndex]
+    if (!drawer) {
+      return false
+    }
+
+    const nonDrawers = room.players.filter(p => p.socketId !== drawer.socketId)
+    if (nonDrawers.length === 0) {
+      return false // No one to guess
+    }
+
+    return nonDrawers.every(player => player.guessedCorrectly)
+  }
+
+  /**
+   * Get the current drawer player data
+   */
+  getCurrentDrawer(roomId: string): playerData | undefined {
+    const room = this.rooms.get(roomId)
+    if (!room) {
+      return undefined
+    }
+
+    return room.players[room.currentDrawerIndex]
+  }
+
+  /**
+   * Advance to the next drawer
+   * Returns true if round was incremented, false otherwise
+   */
+  advanceDrawer(roomId: string): boolean {
+    const room = this.rooms.get(roomId)
+    if (!room) {
+      return false
+    }
+
+    room.currentDrawerIndex = (room.currentDrawerIndex + 1) % room.players.length
+
+    // If we've cycled back to the first player, increment round
+    if (room.currentDrawerIndex === 0) {
+      room.round++
+      return true
+    }
+
+    return false
   }
 }
 
