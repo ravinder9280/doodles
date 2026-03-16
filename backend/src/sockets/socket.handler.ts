@@ -21,9 +21,9 @@ function startRound(roomId: string, io: Server): void {
   // Pick a word from the pool
   if (room.wordPool.length === 0) {
     // Fallback if pool is empty
-    room.currentWord = getRandomWord()
+    room.currentWord = getRandomWord() || ''
   } else {
-    room.currentWord = room.wordPool.pop() || getRandomWord()
+    room.currentWord = room.wordPool.pop() || getRandomWord() || ''
   }
 
   // Get current drawer
