@@ -210,6 +210,34 @@ class RoomManager {
   }
 
   /**
+   * Undo the latest stroke in a room.
+   * A stroke is stored as many `isDrawing=true` points, optionally followed by `isDrawing=false`.
+   */
+  undoLastStrokeInRoom(roomId: string): boolean {
+    const room = this.rooms.get(roomId)
+    if (!room || room.strokes.length === 0) {
+      return false
+    }
+
+    // Remove trailing stroke-end markers, if any.
+    while (room.strokes.length > 0 && room.strokes.at(-1)?.isDrawing === false) {
+      room.strokes.pop()
+    }
+
+    if (room.strokes.length === 0) {
+      return false
+    }
+
+    // Remove all points that belong to the latest stroke payload.
+    while (room.strokes.length > 0 && room.strokes.at(-1)?.isDrawing === true) {
+      room.strokes.pop()
+    }
+
+    console.log(`Undid last stroke for room ${roomId}`)
+    return true
+  }
+
+  /**
    * Get room count (for debugging)
    */
   getRoomCount(): number {

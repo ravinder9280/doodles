@@ -4,8 +4,11 @@ import React, { useEffect, useState, useRef } from 'react'
 import { io } from 'socket.io-client'
 import { Stage, Layer, Line } from 'react-konva'
 import Chat, { ChatMessage } from '../components/Chat'
-import { RefreshCcw, Trash } from 'lucide-react'
+import { Brush, Copy, LogOut, MoreVertical, Paintbrush, RefreshCcw, Trash, Undo2 } from 'lucide-react'
 import { toast } from "sonner"
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Button } from '@/components/ui/button'
 interface Point {
   x: number
   y: number
@@ -75,6 +78,9 @@ const Page = () => {
     '#000000', '#FF0000', '#00FF00', '#0000FF',
     '#FFFF00'
   ]
+  const currentDrawerName = players.find(
+    (player) => player.socketId === currentDrawerSocketId
+  )?.username || 'Unknown player'
 
   // Generate avatar URL using DiceBear API
   const generateAvatarUrl = (seed: string): string => {
@@ -429,6 +435,14 @@ const Page = () => {
       setIsDrawing(false)
     })
 
+    // Undo latest stroke event
+    newSocket.on('undo_stroke', (data: { roomId: string }) => {
+      console.log('Undo stroke:', data.roomId)
+      setStrokes(prev => prev.slice(0, -1))
+      setCurrentStroke([])
+      setIsDrawing(false)
+    })
+
     newSocket.on('disconnect', () => {
       console.log('❌ Disconnected from server')
       setConnected(false)
@@ -565,6 +579,12 @@ const Page = () => {
       setStrokes([])
       setCurrentStroke([])
       setIsDrawing(false)
+    }
+  }
+
+  const handleUndoBoard = () => {
+    if (socket && roomId && connected) {
+      socket.emit('undo_stroke', { roomId })
     }
   }
 
@@ -779,28 +799,41 @@ const Page = () => {
 
       {/* Canvas Section - Top */}
       <div className=' flex flex-col bg-white overflow-hidden flex-1'>
-        <div className='bg-white border-b border-gray-200 p-2 z-10 flex items-center justify-between flex-shrink-0'>
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-            <span className="text-xs font-medium text-gray-700">
-              {connected ? 'Connected' : 'Disconnected'}
-            </span>
-            {gameStarted && (
+        <div className='bg-white border-b border-gray-200 p-1 z-10 flex items-center justify-between flex-shrink-0'>
+          {/* <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div> */}
+
+
+            {gameStarted ? (
               <>
-                <span className="text-xs text-gray-500">|</span>
-                <span className="text-xs font-medium text-gray-700">
-                  Round {round}/{maxRounds}
-                </span>
-                <span className="text-xs text-gray-500">|</span>
-                <span className="text-xs font-medium text-gray-700">
-                  Time: {timeLeft}s
-                </span>
+                <div className='flex items-center flex-col'>
+
+                <div className='bg-gray-200 rounded-full h-5 w-5 flex items-center justify-center'>
+
+                  <p className="text-[11px] font-medium text-gray-700 mb-1">
+                    {timeLeft}s
+                  </p>
+                </div>
+                <p className="text-[11px] font-medium text-gray-700 ">
+                  Round {round} of {maxRounds}
+                </p>
+                </div>
+              {gameStarted  ? (
+                <div className='flex items-center flex-col'>
+                  <p className="text-[11px] font-medium text-gray-700 ">{isDrawer ? 'Draw This:' : 'Guess the word:'}</p>
+                  <p className="text-[11px] relative font-bold text-black">{isDrawer ? secretWord : wordHint || '_ _ _ _ _'}
+                    <span className='absolute top-[-6px] right-[-10px] text-[11px] font-medium text-gray-700'>
+                      {isDrawer ? secretWord.length : (wordHint || '').replace(/\s/g, '').length}
+                    </span>
+                  </p>
+                </div>
+              ) : null}
+
               </>
-            )}
-          </div>
+              
+            ) : <h2 className='text-lg font-bold text-gray-800'>DOODLES</h2>}
+          
           {roomId && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-600">Room: {roomId}</span>
               {!gameStarted && players.find(p => p.socketId === socketId)?.isHost && (
                 <button
                   onClick={() => {
@@ -813,37 +846,44 @@ const Page = () => {
                   Start Game
                 </button>
               )}
-              <button
-                onClick={copyRoomId}
-                className="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-              >
-                Copy
-              </button>
-              <button
-                onClick={handleLeaveRoom}
-                className="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
-              >
-                Leave
-              </button>
+
+
+              <Popover>
+                <PopoverTrigger
+                  className=''
+                >
+                  <button className='p-1  rounded-full  hover:bg-gray-300'>
+
+                    <MoreVertical size={20} />
+                  </button>
+
+                </PopoverTrigger>
+                <PopoverContent className='bg-white w-40' align='end'>
+                  <div className='flex items-center justify-between'>
+                    <span className="text-xs text-gray-600">Room Id: {roomId}</span>
+                    <button
+                      onClick={copyRoomId}
+                      className="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                    >
+                      <Copy size={14} />
+                    </button>
+
+
+                  </div>
+                  <Button
+                    onClick={handleLeaveRoom}
+                    className="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
+                  >
+                    Leave
+                    <LogOut size={14} />
+                  </Button>
+                </PopoverContent>
+              </Popover>
             </div>
           )}
         </div>
         {/* Word hint / secret word display */}
-        {gameStarted && (
-          <div className="bg-blue-50 border-b border-blue-200 p-3 text-center">
-            {isDrawer ? (
-              <div>
-                <p className="text-sm font-medium text-gray-700 mb-1">Your word to draw:</p>
-                <p className="text-2xl font-bold text-blue-600">{secretWord || 'Loading...'}</p>
-              </div>
-            ) : (
-              <div>
-                <p className="text-sm font-medium text-gray-700 mb-1">Guess the word:</p>
-                <p className="text-2xl font-bold text-gray-800">{wordHint || '_ _ _ _ _'}</p>
-              </div>
-            )}
-          </div>
-        )}
+
         <div
           ref={canvasContainerRef}
           className="flex items-center justify-center w-full h-full bg-gray-100 overflow-hidden"
@@ -909,33 +949,51 @@ const Page = () => {
           </div>
         </div>
 
-        {/* Color Picker - Below Canvas */}
+        {/* Color Picker - Below Canvas */} 
+        {
+          gameStarted && isDrawer && (
+        
         <div className='bg-white border-t border-gray-200 p-3 flex-shrink-0'>
-          <div className="flex gap-2 flex-wrap justify-center items-center">
-            {colors.map((color) => (
+          <div className="flex gap-2 justify-between max-w-xl mx-auto items-center">
+            <div className='flex  items-center'>
+
+              {colors.map((color) => (
+                <button
+                  key={color}
+                  onClick={() => setSelectedColor(color)}
+                  className={`w-8 h-8   transition-all ${selectedColor === color
+                    ? 'border-gray-800 border scale-110'
+                    : ' hover:border-gray-500'
+                    }`}
+                  style={{ backgroundColor: color }}
+                  title={color}
+                />
+              ))}
+            </div>
+            <div className='flex items-center '>
+
               <button
-                key={color}
-                onClick={() => setSelectedColor(color)}
-                className={`w-8 h-8 rounded border-2 transition-all ${selectedColor === color
-                  ? 'border-gray-800 scale-110'
-                  : 'border-gray-300 hover:border-gray-500'
-                  }`}
-                style={{ backgroundColor: color }}
-                title={color}
-              />
-            ))}
-            <button
-              onClick={handleClearBoard}
-              disabled={!connected || !roomId}
-              className="ml-2 px-3 py-1.5 bg-red-500 text-white rounded hover:bg-red-600 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1.5 transition-all"
-              title="Clear Board"
-            >
-              <Trash size={16} />
-            </button>
+                onClick={handleClearBoard}
+                disabled={!connected || !roomId}
+                className="ml-2 p-1  text-white rounded bg-gray-400  disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1.5 transition-all"
+                title="Clear Board"
+              >
+                <Trash size={24} />
+              </button>
+              <button
+                onClick={handleUndoBoard}
+                disabled={!connected || !roomId}
+                className="ml-2 p-1  text-white rounded bg-gray-400  disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1.5 transition-all"
+                title="Undo Stroke"
+              >
+                <Undo2 size={24} />
+              </button>
+            </div>
           </div>
         </div>
+        )}
       </div>
-      <div className='flex-1 grid grid-cols-2 border-t border-gray-200 h-[50%]'>
+      <div className='flex-1 grid grid-cols-2 border-t border-black h-[50%]'>
 
         {/* Chat Panel - Between Color Picker and Players List */}
         <Chat
@@ -948,39 +1006,38 @@ const Page = () => {
         />
 
         {/* Players List - Bottom */}
-        <div className='p-2  flex-shrink-0 overflow-y-auto' >
+        <div className='p-1  flex-shrink-0 overflow-y-auto' >
           <div className=' bg-white'>
             {players.map((player, idx) => {
               const isCurrentDrawer = gameStarted && player.socketId === currentDrawerSocketId
               return (
                 <div
                   key={player.socketId}
-                  className={`flex items-center justify-between ${idx % 2 != 0 ? 'bg-gray-200' : ''} gap-2 p-1 md:p-2 ${isCurrentDrawer ? 'bg-yellow-100 border-l-4 border-yellow-500' : ''}`}
+                  className={`flex items-center justify-between ${idx % 2 != 0 ? 'bg-gray-200' : ''} gap-2 p-1 overflow-hidden `}
                 >
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <div className='flex items-center min-w-[40px] '>
+
                     <img
                       src={player.image}
                       alt={player.username}
-                      className="w-10 h-10 rounded flex-shrink-0"
-                    />
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-sm font-medium text-gray-700 truncate">
-                        {player.username}
-                        {player.socketId === socketId && (
-                          <span className="text-blue-500 ml-1">(You)</span>
-                        )}
-                        {isCurrentDrawer && (
-                          <span className="text-yellow-600 ml-1 font-bold">🎨 Drawing</span>
-                        )}
-                        {player.isHost && (
+                      className="w-6 h-6 rounded flex-shrink-0"
+                      />
+                      {isCurrentDrawer&& <span className='ml-1'><Brush size={16} className='text-yellow-600' /></span>}
+                      </div>
+                  <div className="flex items-center gap-2 flex-1 ">
+                    <div className="flex items-center justify-center ">
+                      <span className={`text-[11px] font-medium  ${player.socketId === socketId ? 'text-blue-500' : 'text-gray-700'} line-clamp-1`}>
+                        {player.username}{player.socketId === socketId && <span className=''> (You)</span>}
+                       
+                        {/* {player.isHost && (
                           <span className="text-purple-500 ml-1 text-xs">👑 Host</span>
-                        )}
+                        )} */}
                       </span>
                     </div>
                   </div>
                   {gameStarted && (
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="text-sm font-bold text-gray-800">
+                      <span className="text-[11px] font-bold text-gray-800">
                         {player.score || 0} pts
                       </span>
                     </div>

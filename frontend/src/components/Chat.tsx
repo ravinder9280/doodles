@@ -79,7 +79,7 @@ const Chat: React.FC<ChatProps> = ({ socket, roomId, username, userId, messages,
             </div>
 
             {/* Input Area */}
-            <div className="border-t border-gray-200 bg-gray-100 p-2 flex gap-2">
+            <div className="border-t border-r border-gray-200 bg-gray-100 p-2 flex gap-2">
                 <div className="relative w-full">
 
                     <input

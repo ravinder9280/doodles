@@ -506,6 +506,15 @@ export default function socketHandler(io: Server) {
         }
       }
 
+      roomManager.addStrokeToRoom(roomId, {
+        x: 0,
+        y: 0,
+        color: '',
+        userId,
+        isDrawing: false,
+        timestamp: Date.now()
+      })
+
       // Broadcast to all users in the room (except sender)
       socket.to(roomId).emit("drawEnd", { userId })
     })
@@ -543,6 +552,39 @@ export default function socketHandler(io: Server) {
       io.to(roomId).emit("clear_board", { roomId })
 
       console.log(`User ${socket.id} cleared board in room ${roomId}`)
+    })
+
+    // Undo latest stroke event
+    socket.on("undo_stroke", (data: { roomId: string }) => {
+      const { roomId } = data
+
+      if (!roomId) {
+        return
+      }
+
+      if (!roomManager.roomExists(roomId)) {
+        return
+      }
+
+      const room = roomManager.getRoom(roomId)
+      if (!room || !room.players.some(player => player.socketId === socket.id)) {
+        return
+      }
+
+      // If game is started, only drawer can undo.
+      if (room.gameStarted && room.gamePhase === 'drawing') {
+        const drawer = room.players[room.currentDrawerIndex]
+        if (!drawer || socket.id !== drawer.socketId) {
+          return
+        }
+      }
+
+      if (!roomManager.undoLastStrokeInRoom(roomId)) {
+        return
+      }
+
+      io.to(roomId).emit("undo_stroke", { roomId })
+      console.log(`User ${socket.id} undid last stroke in room ${roomId}`)
     })
 
     // Chat message event
