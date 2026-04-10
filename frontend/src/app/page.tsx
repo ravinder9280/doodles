@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { io } from 'socket.io-client'
 import { Stage, Layer, Line } from 'react-konva'
 import Chat, { ChatMessage } from '../components/Chat'
-import { Brush, Copy, LogOut, MoreVertical, Paintbrush, RefreshCcw, Trash, Undo2 } from 'lucide-react'
+import { Brush, Copy, Link, LogOut, MoreVertical, Paintbrush, RefreshCcw, Trash, Undo2 } from 'lucide-react'
 import { toast } from "sonner"
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -46,6 +46,7 @@ const Page = () => {
   const [roomError, setRoomError] = useState<string>('')
   const [username, setUsername] = useState<string>('')
   const [players, setPlayers] = useState<PlayerData[]>([])
+  const [isHost, setIsHost] = useState<boolean>(false)
   const [showUsernameInput, setShowUsernameInput] = useState<boolean>(true)
   const [avatar, setAvatar] = useState<string>('') // current avatar URL
   const prevPlayersRef = useRef<PlayerData[]>([])
@@ -519,6 +520,7 @@ const Page = () => {
         userId
       })
       setRoomMode('create')
+      setIsHost(true)
     } else if (!username.trim()) {
       setRoomError('Please enter your name')
     }
@@ -569,6 +571,9 @@ const Page = () => {
   const copyRoomId = () => {
     if (roomId) {
       navigator.clipboard.writeText(roomId)
+      toast.success('Room ID copied to clipboard',{
+        position:'bottom-right'
+      })
     }
   }
 
@@ -799,13 +804,13 @@ const Page = () => {
 
       {/* Canvas Section - Top */}
       <div className=' flex flex-col bg-white overflow-hidden flex-1'>
-        <div className='bg-white border-b border-gray-200 p-1 z-10 flex items-center justify-between flex-shrink-0'>
+        <div className='bg-white border-b border-black p-1 z-10 flex items-center justify-between flex-shrink-0'>
           {/* <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div> */}
 
 
-            {gameStarted ? (
-              <>
-                <div className='flex items-center flex-col'>
+          {gameStarted ? (
+            <>
+              <div className='flex items-center flex-col'>
 
                 <div className='bg-gray-200 rounded-full h-5 w-5 flex items-center justify-center'>
 
@@ -816,8 +821,8 @@ const Page = () => {
                 <p className="text-[11px] font-medium text-gray-700 ">
                   Round {round} of {maxRounds}
                 </p>
-                </div>
-              {gameStarted  ? (
+              </div>
+              {gameStarted ? (
                 <div className='flex items-center flex-col'>
                   <p className="text-[11px] font-medium text-gray-700 ">{isDrawer ? 'Draw This:' : 'Guess the word:'}</p>
                   <p className="text-[11px] relative font-bold text-black">{isDrawer ? secretWord : wordHint || '_ _ _ _ _'}
@@ -828,24 +833,16 @@ const Page = () => {
                 </div>
               ) : null}
 
-              </>
-              
-            ) : <h2 className='text-lg font-bold text-gray-800'>DOODLES</h2>}
-          
+            </>
+
+          ) : <>
+            <h2 className='text-lg font-bold text-gray-800'>DOODLES</h2>
+            <p className='text-sm'>Waiting</p>
+          </>
+          }
+
           {roomId && (
             <div className="flex items-center gap-2">
-              {!gameStarted && players.find(p => p.socketId === socketId)?.isHost && (
-                <button
-                  onClick={() => {
-                    if (socket && roomId) {
-                      socket.emit('start_game', { roomId, maxRounds: 3 })
-                    }
-                  }}
-                  className="px-3 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600 font-medium"
-                >
-                  Start Game
-                </button>
-              )}
 
 
               <Popover>
@@ -870,6 +867,13 @@ const Page = () => {
 
 
                   </div>
+                  <Button
+                    onClick={copyRoomId}
+                    className="px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
+                  >
+                    Invite
+                    <Link size={14} />
+                  </Button>
                   <Button
                     onClick={handleLeaveRoom}
                     className="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
@@ -948,50 +952,78 @@ const Page = () => {
             )}
           </div>
         </div>
+        {!gameStarted && (
+          <div className=' flex items-center gap-0 justify-between border-t border-black  flex-shrink-0'>
+            <Button
+              disabled={!isHost}
+              onClick={() => {
+                if (players.length < 2) {
+                  toast.error('Need at least 2 players to start the game')
+                  return
+                }
+                if (socket && roomId) {
+                  socket.emit('start_game', { roomId, maxRounds: 3 })
+                }
+              }}
+              className="px-3 py-1 text-xs bg-green-500 text-white rounded-none border-none hover:bg-green-600 font-medium flex-1"
+            >
+              Start Game
+            </Button>
+            <Button
+              onClick={copyRoomId}
 
-        {/* Color Picker - Below Canvas */} 
+              className="px-3 py-1 text-xs bg-blue-500 text-white rounded-none border-none hover:bg-blue-600 font-medium md:w-[300px] "
+            >
+              <Link size={14} />
+              Invite
+
+            </Button>
+          </div>
+        )}
+
+        {/* Color Picker - Below Canvas */}
         {
           gameStarted && isDrawer && (
-        
-        <div className='bg-white border-t border-gray-200 p-3 flex-shrink-0'>
-          <div className="flex gap-2 justify-between max-w-xl mx-auto items-center">
-            <div className='flex  items-center'>
 
-              {colors.map((color) => (
-                <button
-                  key={color}
-                  onClick={() => setSelectedColor(color)}
-                  className={`w-8 h-8   transition-all ${selectedColor === color
-                    ? 'border-gray-800 border scale-110'
-                    : ' hover:border-gray-500'
-                    }`}
-                  style={{ backgroundColor: color }}
-                  title={color}
-                />
-              ))}
-            </div>
-            <div className='flex items-center '>
+            <div className='bg-white border-t border-black p-1 flex-shrink-0'>
+              <div className="flex gap-2 justify-between max-w-xl mx-auto items-center">
+                <div className='flex  items-center'>
 
-              <button
-                onClick={handleClearBoard}
-                disabled={!connected || !roomId}
-                className="ml-2 p-1  text-white rounded bg-gray-400  disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1.5 transition-all"
-                title="Clear Board"
-              >
-                <Trash size={24} />
-              </button>
-              <button
-                onClick={handleUndoBoard}
-                disabled={!connected || !roomId}
-                className="ml-2 p-1  text-white rounded bg-gray-400  disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1.5 transition-all"
-                title="Undo Stroke"
-              >
-                <Undo2 size={24} />
-              </button>
+                  {colors.map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => setSelectedColor(color)}
+                      className={`w-8 h-8   transition-all ${selectedColor === color
+                        ? 'border-gray-800 border scale-110'
+                        : ' hover:border-gray-500'
+                        }`}
+                      style={{ backgroundColor: color }}
+                      title={color}
+                    />
+                  ))}
+                </div>
+                <div className='flex items-center '>
+
+                  <button
+                    onClick={handleClearBoard}
+                    disabled={!connected || !roomId}
+                    className="ml-2 p-1  text-white rounded bg-gray-400  disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1.5 transition-all"
+                    title="Clear Board"
+                  >
+                    <Trash size={24} />
+                  </button>
+                  <button
+                    onClick={handleUndoBoard}
+                    disabled={!connected || !roomId}
+                    className="ml-2 p-1  text-white rounded bg-gray-400  disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1.5 transition-all"
+                    title="Undo Stroke"
+                  >
+                    <Undo2 size={24} />
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-        )}
+          )}
       </div>
       <div className='flex-1 grid grid-cols-2 border-t border-black h-[50%]'>
 
@@ -1015,20 +1047,20 @@ const Page = () => {
                   key={player.socketId}
                   className={`flex items-center justify-between ${idx % 2 != 0 ? 'bg-gray-200' : ''} gap-2 p-1 overflow-hidden `}
                 >
-                    <div className='flex items-center min-w-[40px] '>
+                  <div className='flex items-center min-w-[40px] '>
 
                     <img
                       src={player.image}
                       alt={player.username}
                       className="w-6 h-6 rounded flex-shrink-0"
-                      />
-                      {isCurrentDrawer&& <span className='ml-1'><Brush size={16} className='text-yellow-600' /></span>}
-                      </div>
+                    />
+                    {isCurrentDrawer && <span className='ml-1'><Brush size={16} className='text-yellow-600' /></span>}
+                  </div>
                   <div className="flex items-center gap-2 flex-1 ">
                     <div className="flex items-center justify-center ">
                       <span className={`text-[11px] font-medium  ${player.socketId === socketId ? 'text-blue-500' : 'text-gray-700'} line-clamp-1`}>
                         {player.username}{player.socketId === socketId && <span className=''> (You)</span>}
-                       
+
                         {/* {player.isHost && (
                           <span className="text-purple-500 ml-1 text-xs">👑 Host</span>
                         )} */}

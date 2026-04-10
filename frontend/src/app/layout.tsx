@@ -4,7 +4,7 @@ import "./globals.css";
 import { Outfit } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/sonner"
-const outfit = Outfit({subsets:['latin'],variable:'--font-sans'});
+const outfit = Outfit({ subsets: ['latin'], variable: '--font-sans' });
 
 
 
@@ -31,7 +31,7 @@ export default function RootLayout({
         className={cn("font-sans", outfit.variable)}
       >
         {children}
-        <Toaster/>
+        <Toaster position="bottom-right" expand />
       </body>
     </html>
   );
