@@ -1,6 +1,17 @@
 import { Server, Socket } from "socket.io"
-import { roomManager } from "../rooms/roomManager.js"
+import { roomManager, type Room } from "../rooms/roomManager.js"
 import { getRandomWord } from "../constant/words.js"
+
+function clearRoomRoundTimers(room: Room): void {
+  if (room.roundTimerRef) {
+    clearTimeout(room.roundTimerRef)
+    room.roundTimerRef = null
+  }
+  if (room.roundTickIntervalRef) {
+    clearInterval(room.roundTickIntervalRef)
+    room.roundTickIntervalRef = null
+  }
+}
 
 /**
  * Start a new round - select drawer, pick word, start timer
@@ -37,11 +48,7 @@ function startRound(roomId: string, io: Server): void {
   room.roundStartTime = Date.now()
   room.gamePhase = 'drawing'
 
-  // Clear any existing timer
-  if (room.roundTimerRef) {
-    clearTimeout(room.roundTimerRef)
-    room.roundTimerRef = null
-  }
+  clearRoomRoundTimers(room)
 
   // Emit drawer selected to all
   io.to(roomId).emit("drawer_selected", {
@@ -77,16 +84,16 @@ function startRound(roomId: string, io: Server): void {
   io.to(roomId).emit("timer_update", { secondsLeft })
 
   // Set up interval to emit timer updates every second
-  const timerInterval = setInterval(() => {
+  room.roundTickIntervalRef = setInterval(() => {
     secondsLeft--
     if (secondsLeft >= 0) {
       io.to(roomId).emit("timer_update", { secondsLeft })
     }
-  }, 1000)
+  }, 1000) as unknown as NodeJS.Timeout
 
   // Set up timeout to end round when time expires
   room.roundTimerRef = setTimeout(() => {
-    clearInterval(timerInterval)
+    clearRoomRoundTimers(room)
     endRound(roomId, io, 'time_up')
   }, room.roundDurationMs) as any
 
@@ -102,11 +109,7 @@ function endRound(roomId: string, io: Server, reason: 'time_up' | 'all_guessed')
     return
   }
 
-  // Clear timer
-  if (room.roundTimerRef) {
-    clearTimeout(room.roundTimerRef)
-    room.roundTimerRef = null
-  }
+  clearRoomRoundTimers(room)
 
   room.gamePhase = 'round_end'
 
@@ -158,11 +161,7 @@ function endGame(roomId: string, io: Server): void {
     return
   }
 
-  // Clear timer
-  if (room.roundTimerRef) {
-    clearTimeout(room.roundTimerRef)
-    room.roundTimerRef = null
-  }
+  clearRoomRoundTimers(room)
 
   // Get final scores
   const players = roomManager.getRoomPlayers(roomId)
@@ -351,7 +350,8 @@ export default function socketHandler(io: Server) {
           username: p.username,
           image: p.image,
           score: p.score,
-          isHost: p.isHost
+          isHost: p.isHost,
+          guessedCorrectly: p.guessedCorrectly
         })),
         gameState
       })
@@ -424,7 +424,8 @@ export default function socketHandler(io: Server) {
           username: p.username,
           image: p.image,
           score: p.score,
-          isHost: p.isHost
+          isHost: p.isHost,
+          guessedCorrectly: p.guessedCorrectly
         }))
       })
 
@@ -634,10 +635,8 @@ export default function socketHandler(io: Server) {
           return
         }
 
-        // Ignore if player already guessed correctly
+        // Players who already guessed cannot send chat for the rest of this round
         if (guessingPlayer.guessedCorrectly) {
-          // Still broadcast the message, but don't process as guess
-          io.to(roomId).emit("chat_message", chatData)
           return
         }
 
@@ -666,7 +665,8 @@ export default function socketHandler(io: Server) {
               username: p.username,
               image: p.image,
               score: p.score,
-              isHost: p.isHost
+              isHost: p.isHost,
+              guessedCorrectly: p.guessedCorrectly
             }))
           })
 
@@ -678,7 +678,19 @@ export default function socketHandler(io: Server) {
             timestamp: Date.now()
           }
           io.to(roomId).emit("chat_message", systemMessage)
-          io.to(roomId).emit("correct_guess", chatData)
+          // Do not put the secret word in the room-wide payload (toasts only need the name)
+          io.to(roomId).emit("correct_guess", {
+            user: resolvedUser,
+            userId: resolvedUserId,
+            message: "",
+            timestamp: Date.now()
+          })
+
+          // Only the guesser and drawer see the actual guess text in chat
+          socket.emit("chat_message", chatData)
+          if (drawer && drawer.socketId !== socket.id) {
+            io.to(drawer.socketId).emit("chat_message", chatData)
+          }
 
           console.log(`${resolvedUser} guessed correctly in room ${roomId}, awarded ${points} points`)
 
@@ -696,20 +708,20 @@ export default function socketHandler(io: Server) {
                   username: p.username,
                   image: p.image,
                   score: p.score,
-                  isHost: p.isHost
+                  isHost: p.isHost,
+                  guessedCorrectly: p.guessedCorrectly
                 }))
               })
             }
 
-            // Clear timer and end round
-            if (room.roundTimerRef) {
-              clearTimeout(room.roundTimerRef)
-              room.roundTimerRef = null
-            }
+            clearRoomRoundTimers(room)
 
             endRound(roomId, io, 'all_guessed')
             return
           }
+
+          // Correct guess handled — never broadcast the word to the whole room
+          return
         }
       }
 
@@ -743,11 +755,7 @@ export default function socketHandler(io: Server) {
 
           // Handle game state if drawer left
           if (wasDrawer) {
-            // Clear timer
-            if (updatedRoom.roundTimerRef) {
-              clearTimeout(updatedRoom.roundTimerRef)
-              updatedRoom.roundTimerRef = null
-            }
+            clearRoomRoundTimers(updatedRoom)
 
             // Check if enough players remain
             if (updatedRoom.players.length < 2) {
@@ -765,10 +773,7 @@ export default function socketHandler(io: Server) {
           } else {
             // Non-drawer left - check if all remaining non-drawers have guessed
             if (roomManager.allNonDrawersGuessed(roomId)) {
-              if (updatedRoom.roundTimerRef) {
-                clearTimeout(updatedRoom.roundTimerRef)
-                updatedRoom.roundTimerRef = null
-              }
+              clearRoomRoundTimers(updatedRoom)
               endRound(roomId, io, 'all_guessed')
             }
           }
@@ -814,11 +819,7 @@ export default function socketHandler(io: Server) {
 
           // Handle game state if drawer disconnected
           if (wasDrawer) {
-            // Clear timer
-            if (updatedRoom.roundTimerRef) {
-              clearTimeout(updatedRoom.roundTimerRef)
-              updatedRoom.roundTimerRef = null
-            }
+            clearRoomRoundTimers(updatedRoom)
 
             // Check if enough players remain
             if (updatedRoom.players.length < 2) {
@@ -836,10 +837,7 @@ export default function socketHandler(io: Server) {
           } else {
             // Non-drawer disconnected - check if all remaining non-drawers have guessed
             if (roomManager.allNonDrawersGuessed(roomId)) {
-              if (updatedRoom.roundTimerRef) {
-                clearTimeout(updatedRoom.roundTimerRef)
-                updatedRoom.roundTimerRef = null
-              }
+              clearRoomRoundTimers(updatedRoom)
               endRound(roomId, io, 'all_guessed')
             }
           }

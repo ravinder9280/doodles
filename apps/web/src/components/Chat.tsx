@@ -17,9 +17,21 @@ interface ChatProps {
     userId?: string
     messages: ChatMessage[]
     onMessageSend: (message: string) => void
+    /** When true, user cannot send (e.g. already guessed this round). */
+    inputLocked?: boolean
+    inputLockedPlaceholder?: string
 }
 
-const Chat: React.FC<ChatProps> = ({ socket, roomId, username, userId, messages, onMessageSend }) => {
+const Chat: React.FC<ChatProps> = ({
+    socket,
+    roomId,
+    username,
+    userId,
+    messages,
+    onMessageSend,
+    inputLocked = false,
+    inputLockedPlaceholder = 'Chat disabled',
+}) => {
     const [inputValue, setInputValue] = useState('')
     const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -87,13 +99,13 @@ const Chat: React.FC<ChatProps> = ({ socket, roomId, username, userId, messages,
                         value={inputValue}
                         onChange={(e) => setInputValue(e.target.value)}
                         onKeyPress={handleKeyPress}
-                        placeholder="Type Here..."
+                        placeholder={inputLocked ? inputLockedPlaceholder : 'Type Here...'}
                         className="flex-1 px-3 py-2 pl-4 border border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm"
-                        disabled={!roomId || !socket}
+                        disabled={!roomId || !socket || inputLocked}
                     />
                     <button
                         onClick={handleSend}
-                        disabled={!inputValue.trim() || !roomId || !socket}
+                        disabled={!inputValue.trim() || !roomId || !socket || inputLocked}
                         className="px-4 py-2  text-blue-400 rounded-lg absolute right-0 h-full  disabled:text-gray-300 disabled:cursor-not-allowed text-sm font-medium transition-colors"
                     >
                         <SendIcon className="w-4 h-4" />

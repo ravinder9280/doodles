@@ -1,12 +1,11 @@
 'use client'
 
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { io } from 'socket.io-client'
 import { Stage, Layer, Line } from 'react-konva'
 import Chat, { ChatMessage } from '../components/Chat'
 import { Brush, Copy, Link, LogOut, MoreVertical, Paintbrush, RefreshCcw, Trash, Undo2 } from 'lucide-react'
 import { toast } from "sonner"
-import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
 interface Point {
@@ -27,6 +26,7 @@ interface PlayerData {
   image: string
   score?: number
   isHost?: boolean
+  guessedCorrectly?: boolean
 }
 
 type RoomMode = 'create' | 'join' | 'drawing'
@@ -70,6 +70,8 @@ const Page = () => {
   const [timeLeft, setTimeLeft] = useState<number>(80)
   const [round, setRound] = useState<number>(1)
   const [maxRounds, setMaxRounds] = useState<number>(3)
+  /** True only while server gamePhase is drawing (so guessers can chat between rounds). */
+  const [isDrawingPhase, setIsDrawingPhase] = useState(false)
 
   // Canvas size state for mobile layout
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
@@ -82,6 +84,15 @@ const Page = () => {
   const currentDrawerName = players.find(
     (player) => player.socketId === currentDrawerSocketId
   )?.username || 'Unknown player'
+
+  const chatLockedAfterGuess = useMemo(
+    () =>
+      isDrawingPhase &&
+      gameStarted &&
+      !isDrawer &&
+      Boolean(players.find(p => p.socketId === socketId)?.guessedCorrectly),
+    [isDrawingPhase, gameStarted, isDrawer, players, socketId]
+  )
 
   // Generate avatar URL using DiceBear API
   const generateAvatarUrl = (seed: string): string => {
@@ -191,12 +202,14 @@ const Page = () => {
         setIsDrawer(data.gameState.isDrawer || false)
         setWordHint(data.gameState.wordHint || '')
         setTimeLeft(data.gameState.secondsLeft || 80)
+        setIsDrawingPhase(true)
       } else {
         setGameStarted(false)
         setIsDrawer(false)
         setWordHint('')
         setSecretWord('')
         setTimeLeft(80)
+        setIsDrawingPhase(false)
       }
 
       // Reconstruct strokes from room data
@@ -256,6 +269,7 @@ const Page = () => {
       setPlayers([])
       setMessages([]) // Clear chat messages
       setShowUsernameInput(true)
+      setIsDrawingPhase(false)
     })
 
     // Chat message event
@@ -285,6 +299,7 @@ const Page = () => {
       setWordHint('')
       setSecretWord('')
       setTimeLeft(80)
+      setIsDrawingPhase(false)
     })
 
     // Drawer selected event
@@ -296,6 +311,8 @@ const Page = () => {
       setTimeLeft(data.timeLimit)
       setWordHint('')
       setSecretWord('')
+      setPlayers(prev => prev.map(p => ({ ...p, guessedCorrectly: false })))
+      setIsDrawingPhase(true)
     })
 
     // Your word event (drawer only)
@@ -332,6 +349,7 @@ const Page = () => {
           return scoreData ? { ...p, score: scoreData.score } : p
         }))
       }
+      setIsDrawingPhase(false)
     })
 
     // Game over event
@@ -351,6 +369,7 @@ const Page = () => {
       setSecretWord('')
       setWordHint('')
       setTimeLeft(80)
+      setIsDrawingPhase(false)
 
       // Update final scores
       if (data.scores) {
@@ -555,17 +574,18 @@ const Page = () => {
       prevPlayersRef.current = []
       setMessages([]) // Clear chat messages
       setShowUsernameInput(true)
+      setIsDrawingPhase(false)
     }
   }
 
   const handleSendMessage = (message: string) => {
-    if (socket && roomId && username && message.trim()) {
-      socket.emit('chat_message', {
-        roomId,
-        message: message.trim(),
-        userId
-      })
-    }
+    if (!socket || !roomId || !username || !message.trim()) return
+    if (chatLockedAfterGuess) return
+    socket.emit('chat_message', {
+      roomId,
+      message: message.trim(),
+      userId
+    })
   }
 
   const copyRoomId = () => {
@@ -1035,6 +1055,8 @@ const Page = () => {
           userId={userId}
           messages={messages}
           onMessageSend={handleSendMessage}
+          inputLocked={chatLockedAfterGuess}
+          inputLockedPlaceholder="You guessed it — no chat until the next round"
         />
 
         {/* Players List - Bottom */}
@@ -1045,7 +1067,13 @@ const Page = () => {
               return (
                 <div
                   key={player.socketId}
-                  className={`flex items-center justify-between ${idx % 2 != 0 ? 'bg-gray-200' : ''} gap-2 p-1 overflow-hidden `}
+                  className={`flex items-center justify-between gap-2 p-1 overflow-hidden ${
+                    gameStarted && player.guessedCorrectly
+                      ? 'bg-green-500'
+                      : idx % 2 !== 0
+                        ? 'bg-gray-200'
+                        : ''
+                  }`}
                 >
                   <div className='flex items-center min-w-[40px] '>
 

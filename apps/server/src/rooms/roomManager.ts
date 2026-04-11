@@ -31,6 +31,8 @@ export interface Room {
   roundStartTime: number       // Date.now() when round started
   roundDurationMs: number      // e.g. 80_000
   roundTimerRef: NodeJS.Timeout | null   // server timer handle (never sent to client)
+  /** 1s tick that emits timer_update; must be cleared with roundTimerRef or it keeps updating the UI */
+  roundTickIntervalRef: NodeJS.Timeout | null
   wordPool: string[]           // shuffled words available this game
 }
 
@@ -87,6 +89,7 @@ class RoomManager {
       roundStartTime: 0,
       roundDurationMs: 80000, // 80 seconds
       roundTimerRef: null,
+      roundTickIntervalRef: null,
       wordPool: []
     }
     this.rooms.set(roomId, room)
