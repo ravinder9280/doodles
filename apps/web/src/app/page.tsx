@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { io } from 'socket.io-client'
 import { Stage, Layer, Line } from 'react-konva'
 import Chat, { ChatMessage } from '../components/Chat'
+import { CanvasBlurOverlay } from '../components/CanvasBlurOverlay'
 import { Brush, Copy, Link, LogOut, MoreVertical, Paintbrush, RefreshCcw, Trash, Undo2 } from 'lucide-react'
 import { toast } from "sonner"
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -72,6 +73,42 @@ const Page = () => {
   const [maxRounds, setMaxRounds] = useState<number>(3)
   /** True only while server gamePhase is drawing (so guessers can chat between rounds). */
   const [isDrawingPhase, setIsDrawingPhase] = useState(false)
+
+  type WordPickUi = {
+    active: boolean
+    secondsLeft: number
+    pickerName: string
+    drawerSocketId: string
+    wordOptions: string[]
+  }
+  const [wordPickUi, setWordPickUi] = useState<WordPickUi>({
+    active: false,
+    secondsLeft: 10,
+    pickerName: '',
+    drawerSocketId: '',
+    wordOptions: [],
+  })
+  const wordPickActiveRef = useRef(false)
+  useEffect(() => {
+    wordPickActiveRef.current = wordPickUi.active
+  }, [wordPickUi.active])
+
+  type RoundEndUi = {
+    active: boolean
+    word: string
+    reason: string
+    roundScores: { socketId: string; username: string; pointsThisRound: number }[]
+  }
+  const [roundEndUi, setRoundEndUi] = useState<RoundEndUi>({
+    active: false,
+    word: '',
+    reason: '',
+    roundScores: [],
+  })
+  const roundEndActiveRef = useRef(false)
+  useEffect(() => {
+    roundEndActiveRef.current = roundEndUi.active
+  }, [roundEndUi.active])
 
   // Canvas size state for mobile layout
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
@@ -192,6 +229,7 @@ const Page = () => {
       setRoomError('')
       setPlayers(data.players || [])
       setShowUsernameInput(false)
+      setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
 
       // Handle game state if game is active
       if (data.gameState) {
@@ -199,10 +237,31 @@ const Page = () => {
         setRound(data.gameState.round || 1)
         setMaxRounds(data.gameState.maxRounds || 3)
         setCurrentDrawerSocketId(data.gameState.drawerSocketId || '')
-        setIsDrawer(data.gameState.isDrawer || false)
-        setWordHint(data.gameState.wordHint || '')
-        setTimeLeft(data.gameState.secondsLeft || 80)
-        setIsDrawingPhase(true)
+        setIsDrawer(Boolean(data.gameState.isDrawer))
+        if (data.gameState.gamePhase === 'picking') {
+          setWordPickUi({
+            active: true,
+            secondsLeft: data.gameState.pickSecondsLeft ?? 10,
+            pickerName: data.gameState.drawerUsername || '',
+            drawerSocketId: data.gameState.drawerSocketId || '',
+            wordOptions: Array.isArray(data.gameState.wordOptions) ? data.gameState.wordOptions : [],
+          })
+          setSecretWord('')
+          setWordHint('')
+          setTimeLeft(80)
+          setIsDrawingPhase(false)
+        } else {
+          setWordPickUi({
+            active: false,
+            secondsLeft: 10,
+            pickerName: '',
+            drawerSocketId: '',
+            wordOptions: [],
+          })
+          setWordHint(data.gameState.wordHint || '')
+          setTimeLeft(data.gameState.secondsLeft ?? 80)
+          setIsDrawingPhase(true)
+        }
       } else {
         setGameStarted(false)
         setIsDrawer(false)
@@ -210,6 +269,13 @@ const Page = () => {
         setSecretWord('')
         setTimeLeft(80)
         setIsDrawingPhase(false)
+        setWordPickUi({
+          active: false,
+          secondsLeft: 10,
+          pickerName: '',
+          drawerSocketId: '',
+          wordOptions: [],
+        })
       }
 
       // Reconstruct strokes from room data
@@ -270,6 +336,14 @@ const Page = () => {
       setMessages([]) // Clear chat messages
       setShowUsernameInput(true)
       setIsDrawingPhase(false)
+      setWordPickUi({
+        active: false,
+        secondsLeft: 10,
+        pickerName: '',
+        drawerSocketId: '',
+        wordOptions: [],
+      })
+      setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
     })
 
     // Chat message event
@@ -300,11 +374,70 @@ const Page = () => {
       setSecretWord('')
       setTimeLeft(80)
       setIsDrawingPhase(false)
+      setWordPickUi({
+        active: false,
+        secondsLeft: 10,
+        pickerName: '',
+        drawerSocketId: '',
+        wordOptions: [],
+      })
+      setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
+    })
+
+    newSocket.on(
+      'word_picking_start',
+      (data: {
+        drawerSocketId: string
+        drawerUsername: string
+        round: number
+        maxRounds?: number
+        pickSeconds: number
+      }) => {
+        setRoundEndUi({
+          active: false,
+          word: '',
+          reason: '',
+          roundScores: [],
+        })
+        setCurrentDrawerSocketId(data.drawerSocketId)
+        setIsDrawer(data.drawerSocketId === newSocket.id)
+        setRound(data.round)
+        if (typeof data.maxRounds === 'number') setMaxRounds(data.maxRounds)
+        setWordPickUi({
+          active: true,
+          secondsLeft: data.pickSeconds,
+          pickerName: data.drawerUsername,
+          drawerSocketId: data.drawerSocketId,
+          wordOptions: [],
+        })
+        setSecretWord('')
+        setWordHint('')
+        setIsDrawingPhase(false)
+      }
+    )
+
+    newSocket.on('pick_word_options', (data: { words: string[] }) => {
+      setWordPickUi(prev =>
+        prev.active ? { ...prev, wordOptions: data.words || [] } : prev
+      )
+    })
+
+    newSocket.on('pick_timer_tick', (data: { secondsLeft: number }) => {
+      setWordPickUi(prev =>
+        prev.active ? { ...prev, secondsLeft: data.secondsLeft } : prev
+      )
     })
 
     // Drawer selected event
     newSocket.on('drawer_selected', (data: { drawerSocketId: string; drawerUsername: string; round: number; timeLimit: number }) => {
       console.log('Drawer selected:', data)
+      setWordPickUi({
+        active: false,
+        secondsLeft: 10,
+        pickerName: '',
+        drawerSocketId: '',
+        wordOptions: [],
+      })
       setCurrentDrawerSocketId(data.drawerSocketId)
       setIsDrawer(data.drawerSocketId === newSocket.id)
       setRound(data.round)
@@ -335,22 +468,41 @@ const Page = () => {
     })
 
     // Round end event
-    newSocket.on('round_end', (data: { word: string; scores: any[]; round: number; reason: string }) => {
-      console.log('Round ended:', data)
-      toast.info(`Round ${data.round} ended! The word was: ${data.word}`)
-      setIsDrawer(false)
-      setSecretWord('')
-      setWordHint('')
+    newSocket.on(
+      'round_end',
+      (data: {
+        word: string
+        scores: any[]
+        roundScores?: { socketId: string; username: string; pointsThisRound: number }[]
+        round: number
+        reason: string
+      }) => {
+        console.log('Round ended:', data)
+        toast.info(`Round ${data.round} ended`)
+        setIsDrawer(false)
+        setSecretWord('')
+        setWordHint('')
 
-      // Update player scores
-      if (data.scores) {
-        setPlayers(prev => prev.map(p => {
-          const scoreData = data.scores.find((s: any) => s.socketId === p.socketId)
-          return scoreData ? { ...p, score: scoreData.score } : p
-        }))
+        if (data.scores) {
+          setPlayers(prev => prev.map(p => {
+            const scoreData = data.scores.find((s: any) => s.socketId === p.socketId)
+            return scoreData ? { ...p, score: scoreData.score } : p
+          }))
+        }
+
+        const rs = (data.roundScores || []).slice().sort((a, b) => {
+          if (b.pointsThisRound !== a.pointsThisRound) return b.pointsThisRound - a.pointsThisRound
+          return a.username.localeCompare(b.username)
+        })
+        setRoundEndUi({
+          active: true,
+          word: data.word,
+          reason: data.reason,
+          roundScores: rs,
+        })
+        setIsDrawingPhase(false)
       }
-      setIsDrawingPhase(false)
-    })
+    )
 
     // Game over event
     newSocket.on('game_over', (data: { scores: any[]; winner: any; winners: any[] }) => {
@@ -370,6 +522,14 @@ const Page = () => {
       setWordHint('')
       setTimeLeft(80)
       setIsDrawingPhase(false)
+      setWordPickUi({
+        active: false,
+        secondsLeft: 10,
+        pickerName: '',
+        drawerSocketId: '',
+        wordOptions: [],
+      })
+      setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
 
       // Update final scores
       if (data.scores) {
@@ -575,7 +735,20 @@ const Page = () => {
       setMessages([]) // Clear chat messages
       setShowUsernameInput(true)
       setIsDrawingPhase(false)
+      setWordPickUi({
+        active: false,
+        secondsLeft: 10,
+        pickerName: '',
+        drawerSocketId: '',
+        wordOptions: [],
+      })
+      setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
     }
+  }
+
+  const handleChooseWord = (choiceIndex: number) => {
+    if (!socket || !roomId || !wordPickUi.active) return
+    socket.emit('choose_word', { roomId, choiceIndex })
   }
 
   const handleSendMessage = (message: string) => {
@@ -615,6 +788,7 @@ const Page = () => {
 
   const handleMouseDown = (e: any) => {
     if (!connected || !socket || !roomId) return
+    if (wordPickActiveRef.current || roundEndActiveRef.current) return
     if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
     const stage = e.target.getStage()
@@ -646,6 +820,7 @@ const Page = () => {
 
   const handleMouseMove = (e: any) => {
     if (!isDrawing || !connected || !socket || !roomId) return
+    if (wordPickActiveRef.current || roundEndActiveRef.current) return
     if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
     const stage = e.target.getStage()
@@ -680,6 +855,11 @@ const Page = () => {
 
   const handleMouseUp = () => {
     if (!isDrawing || !connected || !socket || !roomId) return
+    if (wordPickActiveRef.current || roundEndActiveRef.current) {
+      setIsDrawing(false)
+      setCurrentStroke([])
+      return
+    }
     if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
     setIsDrawing(false)
@@ -835,7 +1015,7 @@ const Page = () => {
                 <div className='bg-gray-200 rounded-full h-5 w-5 flex items-center justify-center'>
 
                   <p className="text-[11px] font-medium text-gray-700 mb-1">
-                    {timeLeft}s
+                    {wordPickUi.active ? `${wordPickUi.secondsLeft}s` : `${timeLeft}s`}
                   </p>
                 </div>
                 <p className="text-[11px] font-medium text-gray-700 ">
@@ -844,12 +1024,23 @@ const Page = () => {
               </div>
               {gameStarted ? (
                 <div className='flex items-center flex-col'>
-                  <p className="text-[11px] font-medium text-gray-700 ">{isDrawer ? 'Draw This:' : 'Guess the word:'}</p>
-                  <p className="text-[11px] relative font-bold text-black">{isDrawer ? secretWord : wordHint || '_ _ _ _ _'}
-                    <span className='absolute top-[-6px] right-[-10px] text-[11px] font-medium text-gray-700'>
-                      {isDrawer ? secretWord.length : (wordHint || '').replace(/\s/g, '').length}
-                    </span>
-                  </p>
+                  {wordPickUi.active ? (
+                    <>
+                      <p className="text-[11px] font-medium text-gray-700">WAITING</p>
+                      <p className="text-[11px] font-bold text-black max-w-[140px] text-center line-clamp-2">
+                        {wordPickUi.pickerName || currentDrawerName} is choosing a word
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-[11px] font-medium text-gray-700 ">{isDrawer ? 'Draw This:' : 'Guess the word:'}</p>
+                      <p className="text-[11px] relative font-bold text-black">{isDrawer ? secretWord : wordHint || '_ _ _ _ _'}
+                        <span className='absolute top-[-6px] right-[-10px] text-[11px] font-medium text-gray-700'>
+                          {isDrawer ? secretWord.length : (wordHint || '').replace(/\s/g, '').length}
+                        </span>
+                      </p>
+                    </>
+                  )}
                 </div>
               ) : null}
 
@@ -912,7 +1103,7 @@ const Page = () => {
           ref={canvasContainerRef}
           className="flex items-center justify-center w-full h-full bg-gray-100 overflow-hidden"
         >
-          <div>
+          <div className="relative inline-block">
 
             {canvasSize.width > 0 && canvasSize.height > 0 && (
               <Stage
@@ -970,6 +1161,63 @@ const Page = () => {
                 </Layer>
               </Stage>
             )}
+            <CanvasBlurOverlay show={roundEndUi.active} blur="lg" className="z-[30]">
+              <div className="flex w-full max-w-sm flex-col items-center gap-3 text-center">
+                <p className="text-base text-white md:text-lg">
+                  The word was{' '}
+                  <span className="font-bold text-amber-400">{roundEndUi.word}</span>
+                </p>
+                <p className="text-sm text-white/90">
+                  {roundEndUi.reason === 'all_guessed' ? 'Everyone guessed!' : 'Time is up!'}
+                </p>
+                {roundEndUi.roundScores.length > 0 ? (
+                  <div className="w-full space-y-2 border-t border-white/25 pt-3 text-left text-sm">
+                    {roundEndUi.roundScores.map(row => (
+                      <div
+                        key={row.socketId}
+                        className="flex justify-between gap-6"
+                      >
+                        <span className="min-w-0 truncate text-white">
+                          {row.username}
+                          {row.socketId === socketId ? ' (You)' : ''}
+                        </span>
+                        <span className="flex-shrink-0 font-semibold text-red-500 tabular-nums">
+                          {row.pointsThisRound}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-white/60">Round scores unavailable.</p>
+                )}
+              </div>
+            </CanvasBlurOverlay>
+            <CanvasBlurOverlay show={wordPickUi.active && !roundEndUi.active} blur="lg" className="z-[20]">
+              {isDrawer ? (
+                <div className="flex flex-col items-center gap-4">
+                  <p className="text-lg font-semibold tracking-wide">Choose a word</p>
+                  <p className="text-3xl font-bold tabular-nums">{wordPickUi.secondsLeft}s</p>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {wordPickUi.wordOptions.map((w, i) => (
+                      <button
+                        key={`${w}-${i}`}
+                        type="button"
+                        onClick={() => handleChooseWord(i)}
+                        className="min-w-[88px] rounded-lg border-2 border-white/90 bg-white/10 px-4 py-2 text-sm font-semibold tracking-wide text-white shadow-sm transition hover:bg-white/20"
+                      >
+                        {w}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2 px-2">
+                  <p className="text-lg font-semibold">
+                    {wordPickUi.pickerName || currentDrawerName} is choosing a word
+                  </p>
+                </div>
+              )}
+            </CanvasBlurOverlay>
           </div>
         </div>
         {!gameStarted && (

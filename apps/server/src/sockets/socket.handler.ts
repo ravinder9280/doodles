@@ -13,44 +13,75 @@ function clearRoomRoundTimers(room: Room): void {
   }
 }
 
+const PICK_DURATION_MS = 10_000
+
+function clearPickingTimers(room: Room): void {
+  if (room.pickingTimerRef) {
+    clearTimeout(room.pickingTimerRef)
+    room.pickingTimerRef = null
+  }
+  if (room.pickingTickIntervalRef) {
+    clearInterval(room.pickingTickIntervalRef)
+    room.pickingTickIntervalRef = null
+  }
+}
+
+function takeThreeWordChoices(room: Room): string[] {
+  const out: string[] = []
+  const pushUnique = (w: string) => {
+    const t = w.trim()
+    const lower = t.toLowerCase()
+    if (!lower || out.some(o => o.toLowerCase() === lower)) return
+    out.push(t)
+  }
+  while (out.length < 3) {
+    if (room.wordPool.length > 0) {
+      const w = room.wordPool.pop()
+      if (w) pushUnique(w)
+      else {
+        const rw = getRandomWord()
+        if (rw) pushUnique(rw)
+      }
+    } else {
+      const rw = getRandomWord()
+      if (rw) pushUnique(rw)
+      else pushUnique(`word${out.length + 1}`)
+    }
+  }
+  return out
+}
+
 /**
- * Start a new round - select drawer, pick word, start timer
+ * After drawer picks (or timeout), start drawing timer and hints.
  */
-function startRound(roomId: string, io: Server): void {
+function beginDrawingPhase(roomId: string, io: Server, word: string): void {
   const room = roomManager.getRoom(roomId)
   if (!room || !room.gameStarted) {
     return
   }
-
-  // Clear previous strokes
-  roomManager.clearRoomStrokes(roomId)
-  io.to(roomId).emit("clear_canvas", {})
-
-  // Reset all guesses
-  roomManager.resetRoundGuesses(roomId)
-
-  // Pick a word from the pool
-  if (room.wordPool.length === 0) {
-    // Fallback if pool is empty
-    room.currentWord = getRandomWord() || ''
-  } else {
-    room.currentWord = room.wordPool.pop() || getRandomWord() || ''
+  if (room.gamePhase !== "picking") {
+    return
   }
 
-  // Get current drawer
+  clearPickingTimers(room)
+  room.pendingWordChoices = []
+  room.pickPhaseEndsAt = 0
+  room.currentWord = word.trim() || (getRandomWord() || "draw")
+  room.gamePhase = "drawing"
+  room.roundStartTime = Date.now()
+
+  room.players.forEach(p => {
+    p.scoreAtDrawingStart = p.score
+  })
+
+  clearRoomRoundTimers(room)
+
   const drawer = roomManager.getCurrentDrawer(roomId)
   if (!drawer) {
     console.error(`No drawer found for room ${roomId}`)
     return
   }
 
-  // Set round start time and phase
-  room.roundStartTime = Date.now()
-  room.gamePhase = 'drawing'
-
-  clearRoomRoundTimers(room)
-
-  // Emit drawer selected to all
   io.to(roomId).emit("drawer_selected", {
     drawerSocketId: drawer.socketId,
     drawerUsername: drawer.username,
@@ -58,16 +89,13 @@ function startRound(roomId: string, io: Server): void {
     timeLimit: room.roundDurationMs / 1000
   })
 
-  // Emit word to drawer only
   io.to(drawer.socketId).emit("your_word", {
     word: room.currentWord
   })
 
-  // Create masked word hint for others
   const wordLength = room.currentWord.length
   const hint = "_ ".repeat(wordLength).trim()
 
-  // Emit word hint to all non-drawers
   room.players.forEach(player => {
     if (player.socketId !== drawer.socketId) {
       io.to(player.socketId).emit("word_hint", {
@@ -77,13 +105,9 @@ function startRound(roomId: string, io: Server): void {
     }
   })
 
-  // Start timer
   let secondsLeft = Math.floor(room.roundDurationMs / 1000)
-
-  // Emit initial timer update
   io.to(roomId).emit("timer_update", { secondsLeft })
 
-  // Set up interval to emit timer updates every second
   room.roundTickIntervalRef = setInterval(() => {
     secondsLeft--
     if (secondsLeft >= 0) {
@@ -91,13 +115,73 @@ function startRound(roomId: string, io: Server): void {
     }
   }, 1000) as unknown as NodeJS.Timeout
 
-  // Set up timeout to end round when time expires
   room.roundTimerRef = setTimeout(() => {
     clearRoomRoundTimers(room)
-    endRound(roomId, io, 'time_up')
+    endRound(roomId, io, "time_up")
   }, room.roundDurationMs) as any
 
-  console.log(`Round ${room.round} started in room ${roomId}, drawer: ${drawer.username}, word: ${room.currentWord}`)
+  console.log(`Round ${room.round} drawing in room ${roomId}, drawer: ${drawer.username}, word: ${room.currentWord}`)
+}
+
+/**
+ * Start a new round — word choice overlay (10s) then drawing.
+ */
+function startRound(roomId: string, io: Server): void {
+  const room = roomManager.getRoom(roomId)
+  if (!room || !room.gameStarted) {
+    return
+  }
+
+  roomManager.clearRoomStrokes(roomId)
+  io.to(roomId).emit("clear_canvas", {})
+
+  roomManager.resetRoundGuesses(roomId)
+
+  room.currentWord = ""
+  const drawer = roomManager.getCurrentDrawer(roomId)
+  if (!drawer) {
+    console.error(`No drawer found for room ${roomId}`)
+    return
+  }
+
+  room.gamePhase = "picking"
+  clearRoomRoundTimers(room)
+  clearPickingTimers(room)
+
+  const words = takeThreeWordChoices(room)
+  room.pendingWordChoices = words
+  room.pickPhaseEndsAt = Date.now() + PICK_DURATION_MS
+
+  io.to(roomId).emit("word_picking_start", {
+    drawerSocketId: drawer.socketId,
+    drawerUsername: drawer.username,
+    round: room.round,
+    maxRounds: room.maxRounds,
+    pickSeconds: Math.floor(PICK_DURATION_MS / 1000)
+  })
+  io.to(drawer.socketId).emit("pick_word_options", { words })
+
+  let pickSecondsLeft = Math.floor(PICK_DURATION_MS / 1000)
+  io.to(roomId).emit("pick_timer_tick", { secondsLeft: pickSecondsLeft })
+
+  room.pickingTickIntervalRef = setInterval(() => {
+    pickSecondsLeft--
+    if (pickSecondsLeft >= 0) {
+      io.to(roomId).emit("pick_timer_tick", { secondsLeft: pickSecondsLeft })
+    }
+  }, 1000) as unknown as NodeJS.Timeout
+
+  room.pickingTimerRef = setTimeout(() => {
+    const r = roomManager.getRoom(roomId)
+    if (!r || r.gamePhase !== "picking") {
+      return
+    }
+    clearPickingTimers(r)
+    const fallback = r.pendingWordChoices[0] || getRandomWord() || "draw"
+    beginDrawingPhase(roomId, io, fallback)
+  }, PICK_DURATION_MS) as any
+
+  console.log(`Word picking started in room ${roomId}, drawer: ${drawer.username}`)
 }
 
 /**
@@ -113,14 +197,20 @@ function endRound(roomId: string, io: Server, reason: 'time_up' | 'all_guessed')
 
   room.gamePhase = 'round_end'
 
-  // Get final scores
+  // Get final scores + points gained this drawing round
   const players = roomManager.getRoomPlayers(roomId)
   const scores = players.map(p => ({ socketId: p.socketId, username: p.username, score: p.score }))
+  const roundScores = players.map(p => ({
+    socketId: p.socketId,
+    username: p.username,
+    pointsThisRound: Math.max(0, p.score - p.scoreAtDrawingStart)
+  }))
 
   // Emit round end to all
   io.to(roomId).emit("round_end", {
     word: room.currentWord,
     scores,
+    roundScores,
     round: room.round,
     reason
   })
@@ -149,7 +239,7 @@ function endRound(roomId: string, io: Server, reason: 'time_up' | 'all_guessed')
       // Start next round
       startRound(roomId, io)
     }
-  }, 3000)
+  }, 5000)
 }
 
 /**
@@ -162,6 +252,9 @@ function endGame(roomId: string, io: Server): void {
   }
 
   clearRoomRoundTimers(room)
+  clearPickingTimers(room)
+  room.pendingWordChoices = []
+  room.pickPhaseEndsAt = 0
 
   // Get final scores
   const players = roomManager.getRoomPlayers(roomId)
@@ -232,7 +325,8 @@ export default function socketHandler(io: Server) {
           image,
           score: 0,
           guessedCorrectly: false,
-          isHost: true
+          isHost: true,
+          scoreAtDrawingStart: 0
         })
         socket.data.currentRoom = roomId
 
@@ -290,7 +384,8 @@ export default function socketHandler(io: Server) {
         image,
         score: 0,
         guessedCorrectly: false,
-        isHost: false
+        isHost: false,
+        scoreAtDrawingStart: 0
       })
       socket.data.currentRoom = roomId
 
@@ -305,7 +400,25 @@ export default function socketHandler(io: Server) {
 
       // Prepare game state if game is active
       let gameState: any = null
-      if (room && room.gameStarted && room.gamePhase === 'drawing') {
+      if (room && room.gameStarted && room.gamePhase === "picking") {
+        const drawer = roomManager.getCurrentDrawer(roomId)
+        const isDrawer = Boolean(drawer && drawer.socketId === socket.id)
+        const pickSecondsLeft = Math.max(
+          0,
+          Math.ceil((room.pickPhaseEndsAt - Date.now()) / 1000)
+        )
+        gameState = {
+          gameStarted: true,
+          gamePhase: "picking",
+          drawerSocketId: drawer?.socketId || "",
+          drawerUsername: drawer?.username || "",
+          round: room.round,
+          maxRounds: room.maxRounds,
+          isDrawer,
+          pickSecondsLeft,
+          wordOptions: isDrawer ? [...room.pendingWordChoices] : []
+        }
+      } else if (room && room.gameStarted && room.gamePhase === 'drawing') {
         const drawer = roomManager.getCurrentDrawer(roomId)
         const isDrawer = drawer && drawer.socketId === socket.id
 
@@ -323,6 +436,7 @@ export default function socketHandler(io: Server) {
 
         gameState = {
           gameStarted: true,
+          gamePhase: "drawing",
           drawerSocketId: drawer?.socketId || '',
           drawerUsername: drawer?.username || '',
           wordHint: wordHint,
@@ -453,11 +567,13 @@ export default function socketHandler(io: Server) {
         return
       }
 
-      // If game is started, only drawer can draw
-      if (room.gameStarted && room.gamePhase === 'drawing') {
+      if (room.gameStarted && room.gamePhase !== "drawing") {
+        return
+      }
+      if (room.gameStarted) {
         const drawer = room.players[room.currentDrawerIndex]
         if (!drawer || socket.id !== drawer.socketId) {
-          return // Silently reject non-drawer attempts
+          return
         }
       }
 
@@ -499,11 +615,13 @@ export default function socketHandler(io: Server) {
         return
       }
 
-      // If game is started, only drawer can draw
-      if (room.gameStarted && room.gamePhase === 'drawing') {
+      if (room.gameStarted && room.gamePhase !== "drawing") {
+        return
+      }
+      if (room.gameStarted) {
         const drawer = room.players[room.currentDrawerIndex]
         if (!drawer || socket.id !== drawer.socketId) {
-          return // Silently reject non-drawer attempts
+          return
         }
       }
 
@@ -538,11 +656,13 @@ export default function socketHandler(io: Server) {
         return
       }
 
-      // If game is started, only drawer can clear
-      if (room.gameStarted && room.gamePhase === 'drawing') {
+      if (room.gameStarted && room.gamePhase !== "drawing") {
+        return
+      }
+      if (room.gameStarted) {
         const drawer = room.players[room.currentDrawerIndex]
         if (!drawer || socket.id !== drawer.socketId) {
-          return // Silently reject non-drawer attempts
+          return
         }
       }
 
@@ -572,8 +692,10 @@ export default function socketHandler(io: Server) {
         return
       }
 
-      // If game is started, only drawer can undo.
-      if (room.gameStarted && room.gamePhase === 'drawing') {
+      if (room.gameStarted && room.gamePhase !== "drawing") {
+        return
+      }
+      if (room.gameStarted) {
         const drawer = room.players[room.currentDrawerIndex]
         if (!drawer || socket.id !== drawer.socketId) {
           return
@@ -586,6 +708,43 @@ export default function socketHandler(io: Server) {
 
       io.to(roomId).emit("undo_stroke", { roomId })
       console.log(`User ${socket.id} undid last stroke in room ${roomId}`)
+    })
+
+    socket.on("choose_word", (data: { roomId: string; choiceIndex: number }) => {
+      const { roomId, choiceIndex } = data
+      if (!roomId || typeof choiceIndex !== "number" || !Number.isInteger(choiceIndex)) {
+        return
+      }
+
+      if (!roomManager.roomExists(roomId)) {
+        return
+      }
+
+      const room = roomManager.getRoom(roomId)
+      if (!room || !room.players.some(player => player.socketId === socket.id)) {
+        return
+      }
+
+      if (room.gamePhase !== "picking") {
+        return
+      }
+
+      const drawer = roomManager.getCurrentDrawer(roomId)
+      if (!drawer || drawer.socketId !== socket.id) {
+        return
+      }
+
+      if (choiceIndex < 0 || choiceIndex > 2) {
+        return
+      }
+
+      const word = room.pendingWordChoices[choiceIndex]
+      if (!word) {
+        return
+      }
+
+      clearPickingTimers(room)
+      beginDrawingPhase(roomId, io, word)
     })
 
     // Chat message event

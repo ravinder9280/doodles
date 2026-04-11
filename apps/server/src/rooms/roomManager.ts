@@ -15,6 +15,8 @@ export interface playerData {
   score: number
   guessedCorrectly: boolean   // reset to false each round
   isHost: boolean             // first player to create the room
+  /** Total score when current drawing phase began (for round-end delta). */
+  scoreAtDrawingStart: number
 }
 
 export interface Room {
@@ -34,6 +36,12 @@ export interface Room {
   /** 1s tick that emits timer_update; must be cleared with roundTimerRef or it keeps updating the UI */
   roundTickIntervalRef: NodeJS.Timeout | null
   wordPool: string[]           // shuffled words available this game
+  /** Three options shown to drawer before each drawing round */
+  pendingWordChoices: string[]
+  /** When pick window ends (ms); 0 if not in picking phase */
+  pickPhaseEndsAt: number
+  pickingTimerRef: NodeJS.Timeout | null
+  pickingTickIntervalRef: NodeJS.Timeout | null
 }
 
 class RoomManager {
@@ -73,7 +81,9 @@ class RoomManager {
   /**
    * Create a new room
    */
-  createRoom(): Room {
+  createRoom({
+    roundDurationMs = 20000
+  }: { roundDurationMs?: number } = { roundDurationMs: 20000 }): Room {
     const roomId = this.generateRoomId()
     const room: Room = {
       roomId,
@@ -87,10 +97,14 @@ class RoomManager {
       round: 0,
       maxRounds: 3,
       roundStartTime: 0,
-      roundDurationMs: 80000, // 80 seconds
+      roundDurationMs: roundDurationMs,
       roundTimerRef: null,
       roundTickIntervalRef: null,
-      wordPool: []
+      wordPool: [],
+      pendingWordChoices: [],
+      pickPhaseEndsAt: 0,
+      pickingTimerRef: null,
+      pickingTickIntervalRef: null
     }
     this.rooms.set(roomId, room)
     console.log(`Room created: ${roomId}`)
@@ -122,13 +136,15 @@ class RoomManager {
 
     if (!room.players.some(player => player.socketId === playerData.socketId)) {
       // Ensure all required fields are set
+      const score = playerData.score ?? 0
       const fullPlayerData: playerData = {
         socketId: playerData.socketId,
         username: playerData.username,
         image: playerData.image,
-        score: playerData.score ?? 0,
+        score,
         guessedCorrectly: playerData.guessedCorrectly ?? false,
-        isHost: playerData.isHost ?? false
+        isHost: playerData.isHost ?? false,
+        scoreAtDrawingStart: playerData.scoreAtDrawingStart ?? score
       }
       room.players.push(fullPlayerData)
       console.log(`Player ${fullPlayerData.socketId} joined room ${roomId}`)
@@ -272,6 +288,7 @@ class RoomManager {
     room.players.forEach(player => {
       player.score = 0
       player.guessedCorrectly = false
+      player.scoreAtDrawingStart = 0
     })
 
     console.log(`Game initialized in room ${roomId} with ${maxRounds} rounds`)

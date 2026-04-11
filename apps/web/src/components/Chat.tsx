@@ -81,9 +81,9 @@ const Chat: React.FC<ChatProps> = ({
                         >
 
                             <p className="text-sm break-words">  <span className="font-bold">
-                                {msg.user}
+                                {msg.userId === "system" ? "" : msg.user+": "} 
                             </span>
-                                : {msg.message}</p>
+                                {" "} {msg.message}</p>
                         </div>
                     ))
                 )}
