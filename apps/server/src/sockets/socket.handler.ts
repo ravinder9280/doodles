@@ -256,12 +256,18 @@ function endGame(roomId: string, io: Server): void {
   room.pendingWordChoices = []
   room.pickPhaseEndsAt = 0
 
-  // Get final scores
+  // Final leaderboard (with avatars for game-end UI)
   const players = roomManager.getRoomPlayers(roomId)
-  const scores = players.map(p => ({ socketId: p.socketId, username: p.username, score: p.score }))
+  const scores = players
+    .map(p => ({
+      socketId: p.socketId,
+      username: p.username,
+      score: p.score,
+      image: p.image
+    }))
+    .sort((a, b) => b.score - a.score)
 
-  // Find winner(s)
-  const maxScore = Math.max(...scores.map(s => s.score))
+  const maxScore = scores.length > 0 ? Math.max(...scores.map(s => s.score)) : 0
   const winners = scores.filter(s => s.score === maxScore)
 
   // Reset game state

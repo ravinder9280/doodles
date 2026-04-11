@@ -5,7 +5,7 @@ import { io } from 'socket.io-client'
 import { Stage, Layer, Line } from 'react-konva'
 import Chat, { ChatMessage } from '../components/Chat'
 import { CanvasBlurOverlay } from '../components/CanvasBlurOverlay'
-import { Brush, Copy, Link, LogOut, MoreVertical, Paintbrush, RefreshCcw, Trash, Undo2 } from 'lucide-react'
+import { Brush, Copy, Crown, Link, LogOut, MoreVertical, Paintbrush, RefreshCcw, Trash, Undo2 } from 'lucide-react'
 import { toast } from "sonner"
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
@@ -110,6 +110,30 @@ const Page = () => {
     roundEndActiveRef.current = roundEndUi.active
   }, [roundEndUi.active])
 
+  type GameOverLeaderboardRow = {
+    socketId: string
+    username: string
+    score: number
+    image: string
+  }
+  type GameOverUi = {
+    active: boolean
+    headline: string
+    leaderboard: GameOverLeaderboardRow[]
+    /** Sole winner gets crown; null for ties or no data */
+    crownSocketId: string | null
+  }
+  const [gameOverUi, setGameOverUi] = useState<GameOverUi>({
+    active: false,
+    headline: '',
+    leaderboard: [],
+    crownSocketId: null,
+  })
+  const gameOverActiveRef = useRef(false)
+  useEffect(() => {
+    gameOverActiveRef.current = gameOverUi.active
+  }, [gameOverUi.active])
+
   // Canvas size state for mobile layout
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
   const canvasContainerRef = useRef<HTMLDivElement>(null)
@@ -121,6 +145,8 @@ const Page = () => {
   const currentDrawerName = players.find(
     (player) => player.socketId === currentDrawerSocketId
   )?.username || 'Unknown player'
+
+  const showGameHeader = gameStarted || (Boolean(roomId) && gameOverUi.active)
 
   const chatLockedAfterGuess = useMemo(
     () =>
@@ -219,6 +245,12 @@ const Page = () => {
       setRoomError('')
       setPlayers(data.players || [])
       setShowUsernameInput(false)
+      setGameOverUi({
+        active: false,
+        headline: '',
+        leaderboard: [],
+        crownSocketId: null,
+      })
     })
 
     // Room joined event
@@ -230,6 +262,12 @@ const Page = () => {
       setPlayers(data.players || [])
       setShowUsernameInput(false)
       setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
+      setGameOverUi({
+        active: false,
+        headline: '',
+        leaderboard: [],
+        crownSocketId: null,
+      })
 
       // Handle game state if game is active
       if (data.gameState) {
@@ -344,6 +382,12 @@ const Page = () => {
         wordOptions: [],
       })
       setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
+      setGameOverUi({
+        active: false,
+        headline: '',
+        leaderboard: [],
+        crownSocketId: null,
+      })
     })
 
     // Chat message event
@@ -382,6 +426,12 @@ const Page = () => {
         wordOptions: [],
       })
       setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
+      setGameOverUi({
+        active: false,
+        headline: '',
+        leaderboard: [],
+        crownSocketId: null,
+      })
     })
 
     newSocket.on(
@@ -398,6 +448,12 @@ const Page = () => {
           word: '',
           reason: '',
           roundScores: [],
+        })
+        setGameOverUi({
+          active: false,
+          headline: '',
+          leaderboard: [],
+          crownSocketId: null,
         })
         setCurrentDrawerSocketId(data.drawerSocketId)
         setIsDrawer(data.drawerSocketId === newSocket.id)
@@ -516,6 +572,30 @@ const Page = () => {
         toast.info('Game Over!')
       }
 
+      const raw = (data.scores || []) as GameOverLeaderboardRow[]
+      const leaderboard = raw
+        .map(s => ({
+          socketId: s.socketId,
+          username: s.username,
+          score: s.score,
+          image: s.image || '',
+        }))
+        .sort((a, b) => b.score - a.score || a.username.localeCompare(b.username))
+
+      let headline = 'Game over!'
+      if (data.winner) {
+        headline = `${data.winner.username} is the winner!`
+      } else if (data.winners && data.winners.length > 0) {
+        headline = `It's a tie — ${data.winners.map((w: any) => w.username).join(' & ')}!`
+      }
+
+      setGameOverUi({
+        active: true,
+        headline,
+        leaderboard,
+        crownSocketId: data.winner?.socketId ?? null,
+      })
+
       setGameStarted(false)
       setIsDrawer(false)
       setSecretWord('')
@@ -535,7 +615,12 @@ const Page = () => {
       if (data.scores) {
         setPlayers(prev => prev.map(p => {
           const scoreData = data.scores.find((s: any) => s.socketId === p.socketId)
-          return scoreData ? { ...p, score: scoreData.score } : p
+          if (!scoreData) return p
+          return {
+            ...p,
+            score: scoreData.score,
+            image: (scoreData as any).image || p.image,
+          }
         }))
       }
     })
@@ -743,6 +828,12 @@ const Page = () => {
         wordOptions: [],
       })
       setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
+      setGameOverUi({
+        active: false,
+        headline: '',
+        leaderboard: [],
+        crownSocketId: null,
+      })
     }
   }
 
@@ -788,7 +879,7 @@ const Page = () => {
 
   const handleMouseDown = (e: any) => {
     if (!connected || !socket || !roomId) return
-    if (wordPickActiveRef.current || roundEndActiveRef.current) return
+    if (wordPickActiveRef.current || roundEndActiveRef.current || gameOverActiveRef.current) return
     if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
     const stage = e.target.getStage()
@@ -820,7 +911,7 @@ const Page = () => {
 
   const handleMouseMove = (e: any) => {
     if (!isDrawing || !connected || !socket || !roomId) return
-    if (wordPickActiveRef.current || roundEndActiveRef.current) return
+    if (wordPickActiveRef.current || roundEndActiveRef.current || gameOverActiveRef.current) return
     if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
     const stage = e.target.getStage()
@@ -855,7 +946,7 @@ const Page = () => {
 
   const handleMouseUp = () => {
     if (!isDrawing || !connected || !socket || !roomId) return
-    if (wordPickActiveRef.current || roundEndActiveRef.current) {
+    if (wordPickActiveRef.current || roundEndActiveRef.current || gameOverActiveRef.current) {
       setIsDrawing(false)
       setCurrentStroke([])
       return
@@ -1008,14 +1099,18 @@ const Page = () => {
           {/* <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div> */}
 
 
-          {gameStarted ? (
+          {showGameHeader ? (
             <>
               <div className='flex items-center flex-col'>
 
                 <div className='bg-gray-200 rounded-full h-5 w-5 flex items-center justify-center'>
 
                   <p className="text-[11px] font-medium text-gray-700 mb-1">
-                    {wordPickUi.active ? `${wordPickUi.secondsLeft}s` : `${timeLeft}s`}
+                    {gameOverUi.active
+                      ? '–'
+                      : wordPickUi.active
+                        ? `${wordPickUi.secondsLeft}s`
+                        : `${timeLeft}s`}
                   </p>
                 </div>
                 <p className="text-[11px] font-medium text-gray-700 ">
@@ -1041,6 +1136,11 @@ const Page = () => {
                       </p>
                     </>
                   )}
+                </div>
+              ) : gameOverUi.active ? (
+                <div className='flex flex-col items-center'>
+                  <p className="text-[11px] font-medium text-gray-700">WAITING</p>
+                  <p className="text-[11px] font-semibold text-gray-600">Match finished</p>
                 </div>
               ) : null}
 
@@ -1161,7 +1261,7 @@ const Page = () => {
                 </Layer>
               </Stage>
             )}
-            <CanvasBlurOverlay show={roundEndUi.active} blur="lg" className="z-[30]">
+            <CanvasBlurOverlay show={roundEndUi.active && !gameOverUi.active} blur="lg" className="z-[30]">
               <div className="flex w-full max-w-sm flex-col items-center gap-3 text-center">
                 <p className="text-base text-white md:text-lg">
                   The word was{' '}
@@ -1192,7 +1292,7 @@ const Page = () => {
                 )}
               </div>
             </CanvasBlurOverlay>
-            <CanvasBlurOverlay show={wordPickUi.active && !roundEndUi.active} blur="lg" className="z-[20]">
+            <CanvasBlurOverlay show={wordPickUi.active && !roundEndUi.active && !gameOverUi.active} blur="lg" className="z-[20]">
               {isDrawer ? (
                 <div className="flex flex-col items-center gap-4">
                   <p className="text-lg font-semibold tracking-wide">Choose a word</p>
@@ -1217,6 +1317,80 @@ const Page = () => {
                   </p>
                 </div>
               )}
+            </CanvasBlurOverlay>
+            <CanvasBlurOverlay show={gameOverUi.active} blur="lg" className="z-[45]">
+              <div className="flex max-h-[min(70vh,520px)] w-full max-w-md flex-col items-center overflow-y-auto px-2">
+                <p className="mb-6 text-center text-xl font-bold text-white md:text-2xl">
+                  {gameOverUi.headline}
+                </p>
+                {gameOverUi.leaderboard.length > 0 ? (
+                  <>
+                    <div className="flex items-end justify-center gap-3 md:gap-8">
+                      {(gameOverUi.leaderboard.length >= 3
+                        ? [
+                            { p: gameOverUi.leaderboard[1], role: 'second' as const },
+                            { p: gameOverUi.leaderboard[0], role: 'first' as const },
+                            { p: gameOverUi.leaderboard[2], role: 'third' as const },
+                          ]
+                        : gameOverUi.leaderboard.length === 2
+                          ? [
+                              { p: gameOverUi.leaderboard[1], role: 'second' as const },
+                              { p: gameOverUi.leaderboard[0], role: 'first' as const },
+                            ]
+                          : [{ p: gameOverUi.leaderboard[0], role: 'first' as const }]
+                      ).map(({ p, role }) => {
+                        if (!p) return null
+                        const isFirst = role === 'first'
+                        const isSecond = role === 'second'
+                        const showCrown =
+                          Boolean(gameOverUi.crownSocketId && p.socketId === gameOverUi.crownSocketId) &&
+                          isFirst
+                        const borderClass = isFirst
+                          ? 'border-amber-400 text-amber-200'
+                          : isSecond
+                            ? 'border-white text-white'
+                            : 'border-amber-700/80 text-amber-100'
+                        const imgClass = isFirst ? 'h-20 w-20 md:h-24 md:w-24' : 'h-14 w-14 md:h-16 md:w-16'
+                        const imgSrc = p.image || generateAvatarUrl(p.username || 'player')
+                        return (
+                          <div key={`${p.socketId}-${role}`} className="flex max-w-[120px] flex-col items-center gap-2">
+                            <div className="flex h-8 items-center justify-center">
+                              {showCrown ? <Crown className="text-amber-400" size={28} strokeWidth={1.75} /> : null}
+                            </div>
+                            <img
+                              src={imgSrc}
+                              alt=""
+                              className={`rounded-full border-2 object-cover ${borderClass} ${imgClass}`}
+                            />
+                            <div
+                              className={`w-full rounded-lg border-2 px-2 py-2 ${borderClass} bg-black/20`}
+                            >
+                              <p className="truncate text-center text-xs font-semibold">{p.username}</p>
+                              <p className="text-center text-sm font-bold tabular-nums">{p.score} points</p>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {gameOverUi.leaderboard.length > 3 ? (
+                      <ul className="mt-6 w-full max-w-sm space-y-1.5 border-t border-white/20 pt-4 text-left text-sm">
+                        {gameOverUi.leaderboard.slice(3).map((p, idx) => (
+                          <li key={p.socketId} className="flex justify-between gap-4 text-white/90">
+                            <span className="min-w-0 truncate">
+                              {idx + 4}. {p.username}
+                              {p.socketId === socketId ? ' (You)' : ''}
+                            </span>
+                            <span className="flex-shrink-0 font-semibold text-red-400 tabular-nums">{p.score}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <p className="mt-6 text-center text-xs text-white/70">Press Start Game when the host is ready for a new match.</p>
+                  </>
+                ) : (
+                  <p className="text-sm text-white/80">No scores to display.</p>
+                )}
+              </div>
             </CanvasBlurOverlay>
           </div>
         </div>
