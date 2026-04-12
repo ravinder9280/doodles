@@ -290,6 +290,9 @@ function endGame(roomId: string, io: Server): void {
   room.currentWord = ''
   room.wordPool = []
 
+  roomManager.clearRoomStrokes(roomId)
+  io.to(roomId).emit("clear_canvas", {})
+
   // Emit game over
   io.to(roomId).emit("game_over", {
     scores,
@@ -658,14 +661,16 @@ export default function socketHandler(io: Server) {
         return
       }
 
-      if (room.gameStarted && room.gamePhase !== "drawing") {
+      if (!room.gameStarted) {
         return
       }
-      if (room.gameStarted) {
-        const drawer = room.players[room.currentDrawerIndex]
-        if (!drawer || socket.id !== drawer.socketId) {
-          return
-        }
+
+      if (room.gamePhase !== "drawing") {
+        return
+      }
+      const drawer = room.players[room.currentDrawerIndex]
+      if (!drawer || socket.id !== drawer.socketId) {
+        return
       }
 
       // Store stroke in room
@@ -706,14 +711,16 @@ export default function socketHandler(io: Server) {
         return
       }
 
-      if (room.gameStarted && room.gamePhase !== "drawing") {
+      if (!room.gameStarted) {
         return
       }
-      if (room.gameStarted) {
-        const drawer = room.players[room.currentDrawerIndex]
-        if (!drawer || socket.id !== drawer.socketId) {
-          return
-        }
+
+      if (room.gamePhase !== "drawing") {
+        return
+      }
+      const drawer = room.players[room.currentDrawerIndex]
+      if (!drawer || socket.id !== drawer.socketId) {
+        return
       }
 
       roomManager.addStrokeToRoom(roomId, {

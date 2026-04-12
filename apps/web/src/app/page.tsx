@@ -620,6 +620,10 @@ const Page = () => {
       setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
       setRound(1)
 
+      setStrokes([])
+      setCurrentStroke([])
+      setIsDrawing(false)
+
       // Update final scores
       if (data.scores) {
         setPlayers(prev => prev.map(p => {
@@ -632,6 +636,8 @@ const Page = () => {
           }
         }))
       }
+      
+      
     })
 
     // Clear canvas event
@@ -893,6 +899,7 @@ const Page = () => {
 
   const handleMouseDown = (e: any) => {
     if (!connected || !socket || !roomId) return
+    if (!gameStarted) return
     if (wordPickActiveRef.current || roundEndActiveRef.current || winnerOverlayActiveRef.current) return
     if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
@@ -925,6 +932,7 @@ const Page = () => {
 
   const handleMouseMove = (e: any) => {
     if (!isDrawing || !connected || !socket || !roomId) return
+    if (!gameStarted) return
     if (wordPickActiveRef.current || roundEndActiveRef.current || winnerOverlayActiveRef.current) return
     if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
@@ -960,6 +968,11 @@ const Page = () => {
 
   const handleMouseUp = () => {
     if (!isDrawing || !connected || !socket || !roomId) return
+    if (!gameStarted) {
+      setIsDrawing(false)
+      setCurrentStroke([])
+      return
+    }
     if (wordPickActiveRef.current || roundEndActiveRef.current || winnerOverlayActiveRef.current) {
       setIsDrawing(false)
       setCurrentStroke([])
@@ -1262,7 +1275,13 @@ const Page = () => {
                 onMouseUp={handleMouseUp}
                 onTouchEnd={handleMouseUp}
                 onMouseLeave={handleMouseUp}
-                className={`border-2 border-gray-300 rounded ${gameStarted && !isDrawer ? 'cursor-not-allowed' : 'cursor-crosshair'}`}
+                className={`border-2 border-gray-300 rounded ${
+                  !gameStarted
+                    ? 'cursor-default'
+                    : !isDrawer
+                      ? 'cursor-not-allowed'
+                      : 'cursor-crosshair'
+                }`}
               >
                 <Layer>
                   {strokes.map((stroke, index) => (
