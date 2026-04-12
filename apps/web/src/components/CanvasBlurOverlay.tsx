@@ -35,7 +35,7 @@ export function CanvasBlurOverlay({
       role="dialog"
       aria-modal="true"
     >
-      <div className="max-w-lg px-4 py-6 text-center text-white">{children}</div>
+      <div className=" max-w-xs md:max-w-lg w-full px-4 py-6 text-center text-white">{children}</div>
     </div>
   )
 }

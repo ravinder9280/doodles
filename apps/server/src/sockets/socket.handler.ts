@@ -1,5 +1,5 @@
 import { Server, Socket } from "socket.io"
-import { roomManager, type Room } from "../rooms/roomManager.js"
+import { roomManager, type Room, roomToConfigWire } from "../rooms/roomManager.js"
 import { getRandomWord } from "../constant/words.js"
 
 function clearRoomRoundTimers(room: Room): void {
@@ -26,7 +26,8 @@ function clearPickingTimers(room: Room): void {
   }
 }
 
-function takeThreeWordChoices(room: Room): string[] {
+function takeWordChoices(room: Room, count: number): string[] {
+  const n = Math.max(2, Math.min(8, Math.floor(count)))
   const out: string[] = []
   const pushUnique = (w: string) => {
     const t = w.trim()
@@ -34,7 +35,7 @@ function takeThreeWordChoices(room: Room): string[] {
     if (!lower || out.some(o => o.toLowerCase() === lower)) return
     out.push(t)
   }
-  while (out.length < 3) {
+  while (out.length < n) {
     if (room.wordPool.length > 0) {
       const w = room.wordPool.pop()
       if (w) pushUnique(w)
@@ -49,6 +50,17 @@ function takeThreeWordChoices(room: Room): string[] {
     }
   }
   return out
+}
+
+const CONFIG_MIN_MAX = {
+  maxPlayers: [2, 12] as const,
+  rounds: [1, 10] as const,
+  wordCount: [2, 8] as const,
+  drawTimeSec: [30, 120] as const,
+}
+
+function clampConfigValue(v: number, [min, max]: readonly [number, number]): number {
+  return Math.min(max, Math.max(min, v))
 }
 
 /**
@@ -148,7 +160,7 @@ function startRound(roomId: string, io: Server): void {
   clearRoomRoundTimers(room)
   clearPickingTimers(room)
 
-  const words = takeThreeWordChoices(room)
+  const words = takeWordChoices(room, room.wordCount)
   room.pendingWordChoices = words
   room.pickPhaseEndsAt = Date.now() + PICK_DURATION_MS
 
@@ -340,7 +352,11 @@ export default function socketHandler(io: Server) {
         const players = roomManager.getRoomPlayers(roomId)
 
         // Send room created confirmation with players list
-        socket.emit("room_created", { roomId, players })
+        socket.emit("room_created", {
+          roomId,
+          players,
+          roomConfig: roomToConfigWire(room),
+        })
 
         // Notify all players in the room about the update
         io.to(roomId).emit("players_updated", { players })
@@ -363,6 +379,16 @@ export default function socketHandler(io: Server) {
 
       if (!roomManager.roomExists(roomId)) {
         socket.emit("room_error", { message: "Room not found" })
+        return
+      }
+
+      const joinRoom = roomManager.getRoom(roomId)
+      if (
+        joinRoom &&
+        !joinRoom.gameStarted &&
+        joinRoom.players.length >= joinRoom.maxPlayers
+      ) {
+        socket.emit("room_error", { message: "Room is full" })
         return
       }
 
@@ -473,7 +499,10 @@ export default function socketHandler(io: Server) {
           isHost: p.isHost,
           guessedCorrectly: p.guessedCorrectly
         })),
-        gameState
+        gameState,
+        ...(room && !room.gameStarted
+          ? { roomConfig: roomToConfigWire(room) }
+          : {}),
       })
 
       // Notify all players in the room about the update
@@ -484,7 +513,7 @@ export default function socketHandler(io: Server) {
 
     // Start game event
     socket.on("start_game", (data: { roomId: string; maxRounds?: number }) => {
-      const { roomId, maxRounds } = data
+      const { roomId } = data
 
       if (!roomId) {
         socket.emit("room_error", { message: "Room ID is required" })
@@ -522,9 +551,8 @@ export default function socketHandler(io: Server) {
         return
       }
 
-      // Initialize game
-      const rounds = maxRounds || 3
-      if (!roomManager.initGame(roomId, rounds)) {
+      // Initialize game (rounds/draw time/word count come from room state, not client)
+      if (!roomManager.initGame(roomId, room.maxRounds)) {
         socket.emit("room_error", { message: "Failed to start game" })
         return
       }
@@ -554,6 +582,63 @@ export default function socketHandler(io: Server) {
 
       console.log(`Game started in room ${roomId} by ${player.username}`)
     })
+
+    socket.on(
+      "update_room_config",
+      (data: {
+        roomId: string
+        maxPlayers?: number
+        rounds?: number
+        wordCount?: number
+        drawTime?: number
+      }) => {
+        const { roomId, maxPlayers, rounds, wordCount, drawTime } = data
+        if (!roomId) {
+          socket.emit("room_error", { message: "Room ID is required" })
+          return
+        }
+
+        const cfgRoom = roomManager.getRoom(roomId)
+        if (!cfgRoom) {
+          socket.emit("room_error", { message: "Room not found" })
+          return
+        }
+
+        const actor = cfgRoom.players.find(p => p.socketId === socket.id)
+        if (!actor?.isHost) {
+          socket.emit("room_error", { message: "Only the host can change room settings" })
+          return
+        }
+
+        if (cfgRoom.gameStarted || cfgRoom.gamePhase !== "waiting") {
+          socket.emit("room_error", { message: "Cannot change settings during a game" })
+          return
+        }
+
+        if (typeof maxPlayers === "number") {
+          const mp = clampConfigValue(maxPlayers, CONFIG_MIN_MAX.maxPlayers)
+          if (mp < cfgRoom.players.length) {
+            socket.emit("room_error", {
+              message: `Max players cannot be below current player count (${cfgRoom.players.length})`,
+            })
+            return
+          }
+          cfgRoom.maxPlayers = mp
+        }
+        if (typeof rounds === "number") {
+          cfgRoom.maxRounds = clampConfigValue(rounds, CONFIG_MIN_MAX.rounds)
+        }
+        if (typeof wordCount === "number") {
+          cfgRoom.wordCount = clampConfigValue(wordCount, CONFIG_MIN_MAX.wordCount)
+        }
+        if (typeof drawTime === "number") {
+          const sec = clampConfigValue(drawTime, CONFIG_MIN_MAX.drawTimeSec)
+          cfgRoom.roundDurationMs = sec * 1000
+        }
+
+        io.to(roomId).emit("room_config_updated", roomToConfigWire(cfgRoom))
+      }
+    )
 
     // Draw event - modified to be room-based
     socket.on("draw", (data: { roomId: string; x: number; y: number; color: string; userId: string; isDrawing: boolean }) => {

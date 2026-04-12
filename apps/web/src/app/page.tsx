@@ -32,6 +32,20 @@ interface PlayerData {
 
 type RoomMode = 'create' | 'join' | 'drawing'
 
+type RoomConfig = {
+  maxPlayers: number
+  rounds: number
+  wordCount: number
+  drawTime: number
+}
+
+const DEFAULT_ROOM_CONFIG: RoomConfig = {
+  maxPlayers: 8,
+  rounds: 3,
+  wordCount: 3,
+  drawTime: 80,
+}
+
 const Page = () => {
   const [socket, setSocket] = useState<any>(null)
   const [connected, setConnected] = useState(false)
@@ -71,6 +85,7 @@ const Page = () => {
   const [timeLeft, setTimeLeft] = useState<number>(80)
   const [round, setRound] = useState<number>(1)
   const [maxRounds, setMaxRounds] = useState<number>(3)
+  const [roomConfig, setRoomConfig] = useState<RoomConfig>(DEFAULT_ROOM_CONFIG)
   /** True only while server gamePhase is drawing (so guessers can chat between rounds). */
   const [isDrawingPhase, setIsDrawingPhase] = useState(false)
 
@@ -110,29 +125,29 @@ const Page = () => {
     roundEndActiveRef.current = roundEndUi.active
   }, [roundEndUi.active])
 
-  type GameOverLeaderboardRow = {
-    socketId: string
-    username: string
-    score: number
-    image: string
-  }
-  type GameOverUi = {
+  type WinnerOverlayUi = {
     active: boolean
     headline: string
-    leaderboard: GameOverLeaderboardRow[]
-    /** Sole winner gets crown; null for ties or no data */
-    crownSocketId: string | null
+    names: string[]
   }
-  const [gameOverUi, setGameOverUi] = useState<GameOverUi>({
+  const [winnerOverlayUi, setWinnerOverlayUi] = useState<WinnerOverlayUi>({
     active: false,
     headline: '',
-    leaderboard: [],
-    crownSocketId: null,
+    names: [],
   })
-  const gameOverActiveRef = useRef(false)
+  const winnerOverlayActiveRef = useRef(false)
+  const winnerDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
-    gameOverActiveRef.current = gameOverUi.active
-  }, [gameOverUi.active])
+    winnerOverlayActiveRef.current = winnerOverlayUi.active
+  }, [winnerOverlayUi.active])
+
+  useEffect(() => {
+    return () => {
+      if (winnerDismissTimerRef.current) {
+        clearTimeout(winnerDismissTimerRef.current)
+      }
+    }
+  }, [])
 
   // Canvas size state for mobile layout
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
@@ -146,7 +161,12 @@ const Page = () => {
     (player) => player.socketId === currentDrawerSocketId
   )?.username || 'Unknown player'
 
-  const showGameHeader = gameStarted || (Boolean(roomId) && gameOverUi.active)
+  const showGameHeader = gameStarted || Boolean(roomId)
+
+  useEffect(() => {
+    const me = players.find(p => p.socketId === socketId)
+    setIsHost(Boolean(me?.isHost))
+  }, [players, socketId])
 
   const chatLockedAfterGuess = useMemo(
     () =>
@@ -237,7 +257,9 @@ const Page = () => {
     })
 
     // Room created event
-    newSocket.on('room_created', (data: { roomId: string; players: PlayerData[] }) => {
+    newSocket.on(
+      'room_created',
+      (data: { roomId: string; players: PlayerData[]; roomConfig?: RoomConfig }) => {
       console.log('Room created:', data.roomId)
       setRoomId(data.roomId)
       setRoomMode('drawing')
@@ -245,16 +267,18 @@ const Page = () => {
       setRoomError('')
       setPlayers(data.players || [])
       setShowUsernameInput(false)
-      setGameOverUi({
-        active: false,
-        headline: '',
-        leaderboard: [],
-        crownSocketId: null,
-      })
+      if (data.roomConfig) setRoomConfig(data.roomConfig)
+      setWinnerOverlayUi({ active: false, headline: '', names: [] })
     })
 
     // Room joined event
-    newSocket.on('room_joined', (data: { roomId: string; strokes: any[]; players: PlayerData[]; gameState?: any }) => {
+    newSocket.on('room_joined', (data: {
+      roomId: string
+      strokes: any[]
+      players: PlayerData[]
+      gameState?: any
+      roomConfig?: RoomConfig
+    }) => {
       console.log('Room joined:', data.roomId)
       setRoomId(data.roomId)
       setRoomMode('drawing')
@@ -262,12 +286,8 @@ const Page = () => {
       setPlayers(data.players || [])
       setShowUsernameInput(false)
       setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
-      setGameOverUi({
-        active: false,
-        headline: '',
-        leaderboard: [],
-        crownSocketId: null,
-      })
+      setWinnerOverlayUi({ active: false, headline: '', names: [] })
+      if (data.roomConfig) setRoomConfig(data.roomConfig)
 
       // Handle game state if game is active
       if (data.gameState) {
@@ -373,6 +393,8 @@ const Page = () => {
       setPlayers([])
       setMessages([]) // Clear chat messages
       setShowUsernameInput(true)
+      setGameStarted(false)
+      setRoomConfig(DEFAULT_ROOM_CONFIG)
       setIsDrawingPhase(false)
       setWordPickUi({
         active: false,
@@ -382,12 +404,12 @@ const Page = () => {
         wordOptions: [],
       })
       setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
-      setGameOverUi({
-        active: false,
-        headline: '',
-        leaderboard: [],
-        crownSocketId: null,
-      })
+      setWinnerOverlayUi({ active: false, headline: '', names: [] })
+    })
+
+    newSocket.on('room_config_updated', (cfg: RoomConfig) => {
+      setRoomConfig(cfg)
+      setMaxRounds(cfg.rounds)
     })
 
     // Chat message event
@@ -426,12 +448,7 @@ const Page = () => {
         wordOptions: [],
       })
       setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
-      setGameOverUi({
-        active: false,
-        headline: '',
-        leaderboard: [],
-        crownSocketId: null,
-      })
+      setWinnerOverlayUi({ active: false, headline: '', names: [] })
     })
 
     newSocket.on(
@@ -449,12 +466,7 @@ const Page = () => {
           reason: '',
           roundScores: [],
         })
-        setGameOverUi({
-          active: false,
-          headline: '',
-          leaderboard: [],
-          crownSocketId: null,
-        })
+        setWinnerOverlayUi({ active: false, headline: '', names: [] })
         setCurrentDrawerSocketId(data.drawerSocketId)
         setIsDrawer(data.drawerSocketId === newSocket.id)
         setRound(data.round)
@@ -572,29 +584,25 @@ const Page = () => {
         toast.info('Game Over!')
       }
 
-      const raw = (data.scores || []) as GameOverLeaderboardRow[]
-      const leaderboard = raw
-        .map(s => ({
-          socketId: s.socketId,
-          username: s.username,
-          score: s.score,
-          image: s.image || '',
-        }))
-        .sort((a, b) => b.score - a.score || a.username.localeCompare(b.username))
-
       let headline = 'Game over!'
+      let names: string[] = []
       if (data.winner) {
-        headline = `${data.winner.username} is the winner!`
+        headline = `${data.winner.username} wins!`
+        names = [data.winner.username]
       } else if (data.winners && data.winners.length > 0) {
-        headline = `It's a tie — ${data.winners.map((w: any) => w.username).join(' & ')}!`
+        names = data.winners.map((w: any) => w.username)
+        headline = `It's a tie!`
       }
 
-      setGameOverUi({
-        active: true,
-        headline,
-        leaderboard,
-        crownSocketId: data.winner?.socketId ?? null,
-      })
+      if (winnerDismissTimerRef.current) {
+        clearTimeout(winnerDismissTimerRef.current)
+        winnerDismissTimerRef.current = null
+      }
+      setWinnerOverlayUi({ active: true, headline, names })
+      winnerDismissTimerRef.current = setTimeout(() => {
+        setWinnerOverlayUi({ active: false, headline: '', names: [] })
+        winnerDismissTimerRef.current = null
+      }, 6000)
 
       setGameStarted(false)
       setIsDrawer(false)
@@ -610,6 +618,7 @@ const Page = () => {
         wordOptions: [],
       })
       setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
+      setRound(1)
 
       // Update final scores
       if (data.scores) {
@@ -784,7 +793,6 @@ const Page = () => {
         userId
       })
       setRoomMode('create')
-      setIsHost(true)
     } else if (!username.trim()) {
       setRoomError('Please enter your name')
     }
@@ -811,6 +819,10 @@ const Page = () => {
 
   const handleLeaveRoom = () => {
     if (socket && roomId) {
+      if (winnerDismissTimerRef.current) {
+        clearTimeout(winnerDismissTimerRef.current)
+        winnerDismissTimerRef.current = null
+      }
       socket.emit('leave_room', { roomId })
       setRoomId(null)
       setRoomMode('create')
@@ -819,6 +831,8 @@ const Page = () => {
       prevPlayersRef.current = []
       setMessages([]) // Clear chat messages
       setShowUsernameInput(true)
+      setGameStarted(false)
+      setRoomConfig(DEFAULT_ROOM_CONFIG)
       setIsDrawingPhase(false)
       setWordPickUi({
         active: false,
@@ -828,13 +842,13 @@ const Page = () => {
         wordOptions: [],
       })
       setRoundEndUi({ active: false, word: '', reason: '', roundScores: [] })
-      setGameOverUi({
-        active: false,
-        headline: '',
-        leaderboard: [],
-        crownSocketId: null,
-      })
+      setWinnerOverlayUi({ active: false, headline: '', names: [] })
     }
+  }
+
+  const patchRoomConfig = (patch: Partial<RoomConfig>) => {
+    if (!socket?.connected || !roomId || !isHost) return
+    socket.emit('update_room_config', { roomId, ...patch })
   }
 
   const handleChooseWord = (choiceIndex: number) => {
@@ -855,8 +869,8 @@ const Page = () => {
   const copyRoomId = () => {
     if (roomId) {
       navigator.clipboard.writeText(roomId)
-      toast.success('Room ID copied to clipboard',{
-        position:'bottom-right'
+      toast.success('Room ID copied to clipboard', {
+        position: 'bottom-right'
       })
     }
   }
@@ -879,7 +893,7 @@ const Page = () => {
 
   const handleMouseDown = (e: any) => {
     if (!connected || !socket || !roomId) return
-    if (wordPickActiveRef.current || roundEndActiveRef.current || gameOverActiveRef.current) return
+    if (wordPickActiveRef.current || roundEndActiveRef.current || winnerOverlayActiveRef.current) return
     if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
     const stage = e.target.getStage()
@@ -911,7 +925,7 @@ const Page = () => {
 
   const handleMouseMove = (e: any) => {
     if (!isDrawing || !connected || !socket || !roomId) return
-    if (wordPickActiveRef.current || roundEndActiveRef.current || gameOverActiveRef.current) return
+    if (wordPickActiveRef.current || roundEndActiveRef.current || winnerOverlayActiveRef.current) return
     if (gameStarted && !isDrawer) return // Only drawer can draw when game is active
 
     const stage = e.target.getStage()
@@ -946,7 +960,7 @@ const Page = () => {
 
   const handleMouseUp = () => {
     if (!isDrawing || !connected || !socket || !roomId) return
-    if (wordPickActiveRef.current || roundEndActiveRef.current || gameOverActiveRef.current) {
+    if (wordPickActiveRef.current || roundEndActiveRef.current || winnerOverlayActiveRef.current) {
       setIsDrawing(false)
       setCurrentStroke([])
       return
@@ -1106,7 +1120,7 @@ const Page = () => {
                 <div className='bg-gray-200 rounded-full h-5 w-5 flex items-center justify-center'>
 
                   <p className="text-[11px] font-medium text-gray-700 mb-1">
-                    {gameOverUi.active
+                    {winnerOverlayUi.active
                       ? '–'
                       : wordPickUi.active
                         ? `${wordPickUi.secondsLeft}s`
@@ -1114,7 +1128,7 @@ const Page = () => {
                   </p>
                 </div>
                 <p className="text-[11px] font-medium text-gray-700 ">
-                  Round {round} of {maxRounds}
+                  Round {gameStarted ? round : 1} of {gameStarted ? maxRounds : roomConfig.rounds}
                 </p>
               </div>
               {gameStarted ? (
@@ -1137,10 +1151,15 @@ const Page = () => {
                     </>
                   )}
                 </div>
-              ) : gameOverUi.active ? (
+              ) : winnerOverlayUi.active ? (
                 <div className='flex flex-col items-center'>
                   <p className="text-[11px] font-medium text-gray-700">WAITING</p>
                   <p className="text-[11px] font-semibold text-gray-600">Match finished</p>
+                </div>
+              ) : !gameStarted && roomId ? (
+                <div className='flex flex-col items-center'>
+                  <p className="text-[11px] font-medium text-gray-700">WAITING</p>
+                  <p className="text-[11px] font-semibold text-gray-600">In lobby</p>
                 </div>
               ) : null}
 
@@ -1261,7 +1280,98 @@ const Page = () => {
                 </Layer>
               </Stage>
             )}
-            <CanvasBlurOverlay show={roundEndUi.active && !gameOverUi.active} blur="lg" className="z-[30]">
+            <CanvasBlurOverlay
+              show={
+                roomMode === 'drawing' &&
+                Boolean(roomId) &&
+                !gameStarted &&
+                !wordPickUi.active &&
+                !roundEndUi.active &&
+                isHost &&
+                !winnerOverlayUi.active
+              }
+              blur="lg"
+              className="z-[25] "
+            >
+              <div className="w-full  space-y-4 text-left">
+                <p className="text-center text-lg font-semibold text-white">Room settings</p>
+                  <div className="grid gap-3 text-sm">
+                    <label className="flex flex-col gap-1 text-white/90">
+                      <span>Max players</span>
+                      <select
+                        className="rounded border border-white/40 bg-black/40 px-2 py-1.5 text-white"
+                        value={roomConfig.maxPlayers}
+                        onChange={e => {
+                          const v = Number(e.target.value)
+                          setRoomConfig(c => ({ ...c, maxPlayers: v }))
+                          patchRoomConfig({ maxPlayers: v })
+                        }}
+                      >
+                        {Array.from({ length: 11 }, (_, i) => i + 2).map(n => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-white/90">
+                      <span>Rounds</span>
+                      <select
+                        className="rounded border border-white/40 bg-black/40 px-2 py-1.5 text-white"
+                        value={roomConfig.rounds}
+                        onChange={e => {
+                          const v = Number(e.target.value)
+                          setRoomConfig(c => ({ ...c, rounds: v }))
+                          patchRoomConfig({ rounds: v })
+                        }}
+                      >
+                        {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-white/90">
+                      <span>Word choices</span>
+                      <select
+                        className="rounded border border-white/40 bg-black/40 px-2 py-1.5 text-white"
+                        value={roomConfig.wordCount}
+                        onChange={e => {
+                          const v = Number(e.target.value)
+                          setRoomConfig(c => ({ ...c, wordCount: v }))
+                          patchRoomConfig({ wordCount: v })
+                        }}
+                      >
+                        {Array.from({ length: 7 }, (_, i) => i + 2).map(n => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-white/90">
+                      <span>Draw time (seconds)</span>
+                      <select
+                        className="rounded border border-white/40 bg-black/40 px-2 py-1.5 text-white"
+                        value={roomConfig.drawTime}
+                        onChange={e => {
+                          const v = Number(e.target.value)
+                          setRoomConfig(c => ({ ...c, drawTime: v }))
+                          patchRoomConfig({ drawTime: v })
+                        }}
+                      >
+                        {Array.from({ length: 10 }, (_, i) => 30 + i * 10).map(n => (
+                          <option key={n} value={n}>
+                            {n}s
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+              </div>
+            </CanvasBlurOverlay>
+            <CanvasBlurOverlay show={roundEndUi.active && !winnerOverlayUi.active} blur="lg" className="z-[30]">
               <div className="flex w-full max-w-sm flex-col items-center gap-3 text-center">
                 <p className="text-base text-white md:text-lg">
                   The word was{' '}
@@ -1281,7 +1391,7 @@ const Page = () => {
                           {row.username}
                           {row.socketId === socketId ? ' (You)' : ''}
                         </span>
-                        <span className="flex-shrink-0 font-semibold text-red-500 tabular-nums">
+                        <span className="flex-shrink-0 font-semibold  tabular-nums">
                           {row.pointsThisRound}
                         </span>
                       </div>
@@ -1292,7 +1402,7 @@ const Page = () => {
                 )}
               </div>
             </CanvasBlurOverlay>
-            <CanvasBlurOverlay show={wordPickUi.active && !roundEndUi.active && !gameOverUi.active} blur="lg" className="z-[20]">
+            <CanvasBlurOverlay show={wordPickUi.active && !roundEndUi.active && !winnerOverlayUi.active} blur="lg" className="z-[20]">
               {isDrawer ? (
                 <div className="flex flex-col items-center gap-4">
                   <p className="text-lg font-semibold tracking-wide">Choose a word</p>
@@ -1318,83 +1428,22 @@ const Page = () => {
                 </div>
               )}
             </CanvasBlurOverlay>
-            <CanvasBlurOverlay show={gameOverUi.active} blur="lg" className="z-[45]">
-              <div className="flex max-h-[min(70vh,520px)] w-full max-w-md flex-col items-center overflow-y-auto px-2">
-                <p className="mb-6 text-center text-xl font-bold text-white md:text-2xl">
-                  {gameOverUi.headline}
+            <CanvasBlurOverlay show={winnerOverlayUi.active} blur="lg" className="z-[45]">
+              <div className="flex flex-col items-center gap-4 px-2">
+                <Crown className="text-amber-400" size={40} strokeWidth={1.75} />
+                <p className="text-center text-xl font-bold text-white md:text-2xl">
+                  {winnerOverlayUi.headline}
                 </p>
-                {gameOverUi.leaderboard.length > 0 ? (
-                  <>
-                    <div className="flex items-end justify-center gap-3 md:gap-8">
-                      {(gameOverUi.leaderboard.length >= 3
-                        ? [
-                            { p: gameOverUi.leaderboard[1], role: 'second' as const },
-                            { p: gameOverUi.leaderboard[0], role: 'first' as const },
-                            { p: gameOverUi.leaderboard[2], role: 'third' as const },
-                          ]
-                        : gameOverUi.leaderboard.length === 2
-                          ? [
-                              { p: gameOverUi.leaderboard[1], role: 'second' as const },
-                              { p: gameOverUi.leaderboard[0], role: 'first' as const },
-                            ]
-                          : [{ p: gameOverUi.leaderboard[0], role: 'first' as const }]
-                      ).map(({ p, role }) => {
-                        if (!p) return null
-                        const isFirst = role === 'first'
-                        const isSecond = role === 'second'
-                        const showCrown =
-                          Boolean(gameOverUi.crownSocketId && p.socketId === gameOverUi.crownSocketId) &&
-                          isFirst
-                        const borderClass = isFirst
-                          ? 'border-amber-400 text-amber-200'
-                          : isSecond
-                            ? 'border-white text-white'
-                            : 'border-amber-700/80 text-amber-100'
-                        const imgClass = isFirst ? 'h-20 w-20 md:h-24 md:w-24' : 'h-14 w-14 md:h-16 md:w-16'
-                        const imgSrc = p.image || generateAvatarUrl(p.username || 'player')
-                        return (
-                          <div key={`${p.socketId}-${role}`} className="flex max-w-[120px] flex-col items-center gap-2">
-                            <div className="flex h-8 items-center justify-center">
-                              {showCrown ? <Crown className="text-amber-400" size={28} strokeWidth={1.75} /> : null}
-                            </div>
-                            <img
-                              src={imgSrc}
-                              alt=""
-                              className={`rounded-full border-2 object-cover ${borderClass} ${imgClass}`}
-                            />
-                            <div
-                              className={`w-full rounded-lg border-2 px-2 py-2 ${borderClass} bg-black/20`}
-                            >
-                              <p className="truncate text-center text-xs font-semibold">{p.username}</p>
-                              <p className="text-center text-sm font-bold tabular-nums">{p.score} points</p>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                    {gameOverUi.leaderboard.length > 3 ? (
-                      <ul className="mt-6 w-full max-w-sm space-y-1.5 border-t border-white/20 pt-4 text-left text-sm">
-                        {gameOverUi.leaderboard.slice(3).map((p, idx) => (
-                          <li key={p.socketId} className="flex justify-between gap-4 text-white/90">
-                            <span className="min-w-0 truncate">
-                              {idx + 4}. {p.username}
-                              {p.socketId === socketId ? ' (You)' : ''}
-                            </span>
-                            <span className="flex-shrink-0 font-semibold text-red-400 tabular-nums">{p.score}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    <p className="mt-6 text-center text-xs text-white/70">Press Start Game when the host is ready for a new match.</p>
-                  </>
-                ) : (
-                  <p className="text-sm text-white/80">No scores to display.</p>
-                )}
+                {winnerOverlayUi.names.length > 0 ? (
+                  <p className="text-center text-lg font-semibold text-white/95">
+                    {winnerOverlayUi.names.join(' · ')}
+                  </p>
+                ) : null}
               </div>
             </CanvasBlurOverlay>
           </div>
         </div>
-        {!gameStarted && (
+        {!gameStarted && !winnerOverlayUi.active && (
           <div className=' flex items-center gap-0 justify-between border-t border-black  flex-shrink-0'>
             <Button
               disabled={!isHost}
@@ -1489,13 +1538,12 @@ const Page = () => {
               return (
                 <div
                   key={player.socketId}
-                  className={`flex items-center justify-between gap-2 p-1 overflow-hidden ${
-                    gameStarted && player.guessedCorrectly
+                  className={`flex items-center justify-between gap-2 p-1 overflow-hidden ${gameStarted && player.guessedCorrectly
                       ? 'bg-green-500'
                       : idx % 2 !== 0
                         ? 'bg-gray-200'
                         : ''
-                  }`}
+                    }`}
                 >
                   <div className='flex items-center min-w-[40px] '>
 
@@ -1506,24 +1554,31 @@ const Page = () => {
                     />
                     {isCurrentDrawer && <span className='ml-1'><Brush size={16} className='text-yellow-600' /></span>}
                   </div>
-                  <div className="flex items-center gap-2 flex-1 ">
-                    <div className="flex items-center justify-center ">
-                      <span className={`text-[11px] font-medium  ${player.socketId === socketId ? 'text-blue-500' : 'text-gray-700'} line-clamp-1`}>
+                  <div className="flex items-center  flex-1 ">
+                      <div className='flex flex-col gap-1'>
+
+                      <div className={`text-[11px] leading-none font-medium  ${player.socketId === socketId ? 'text-blue-500' : 'text-gray-700'} line-clamp-1`}>
                         {player.username}{player.socketId === socketId && <span className=''> (You)</span>}
 
                         {/* {player.isHost && (
                           <span className="text-purple-500 ml-1 text-xs">👑 Host</span>
                         )} */}
-                      </span>
+                      </div>
+                      {
+                        gameStarted && (
+                        <div className="text-[8px] leading-none font-bold text-gray-800">
+                          {player.score || 0} pts
+                        </div>
+                      )}
                     </div>
                   </div>
-                  {gameStarted && (
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="text-[11px] font-bold text-gray-800">
-                        {player.score || 0} pts
-                      </span>
-                    </div>
-                  )}
+                 <div>
+                  {
+                    player.isHost && (
+                      <Crown size={16} className='text-yellow-600' />
+                    )
+                  }
+                 </div>
                 </div>
               )
             })}

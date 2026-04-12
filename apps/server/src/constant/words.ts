@@ -92,7 +92,7 @@ export function shuffleArray<T>(array: T[]): T[] {
 /**
  * Get a random word from the word bank
  */
-export function getRandomWord(): string|undefined {
+export function getRandomWord(): string | undefined {
     return WORD_BANK[Math.floor(Math.random() * WORD_BANK.length)]
 }
 

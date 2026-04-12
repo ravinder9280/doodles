@@ -21,6 +21,7 @@ export interface playerData {
 
 export interface Room {
   roomId: string
+  maxPlayers: number
   players: playerData[]  // Array of socket IDs
   strokes: StrokeData[]  // All drawing strokes
   createdAt: number  // Timestamp
@@ -36,12 +37,30 @@ export interface Room {
   /** 1s tick that emits timer_update; must be cleared with roundTimerRef or it keeps updating the UI */
   roundTickIntervalRef: NodeJS.Timeout | null
   wordPool: string[]           // shuffled words available this game
-  /** Three options shown to drawer before each drawing round */
+  /** Number of word options shown to drawer before each drawing round */
+  wordCount: number
   pendingWordChoices: string[]
   /** When pick window ends (ms); 0 if not in picking phase */
   pickPhaseEndsAt: number
   pickingTimerRef: NodeJS.Timeout | null
   pickingTickIntervalRef: NodeJS.Timeout | null
+}
+
+/** Wire format for clients (drawTime in seconds). */
+export type RoomConfigWire = {
+  maxPlayers: number
+  rounds: number
+  wordCount: number
+  drawTime: number
+}
+
+export function roomToConfigWire(room: Room): RoomConfigWire {
+  return {
+    maxPlayers: room.maxPlayers,
+    rounds: room.maxRounds,
+    wordCount: room.wordCount,
+    drawTime: Math.round(room.roundDurationMs / 1000),
+  }
 }
 
 class RoomManager {
@@ -82,11 +101,20 @@ class RoomManager {
    * Create a new room
    */
   createRoom({
-    roundDurationMs = 20000
-  }: { roundDurationMs?: number } = { roundDurationMs: 20000 }): Room {
+    roundDurationMs = 80_000,
+    maxPlayers = 8,
+    rounds = 3,
+    wordCount = 3,
+  }: {
+    roundDurationMs?: number
+    maxPlayers?: number
+    rounds?: number
+    wordCount?: number
+  } = {}): Room {
     const roomId = this.generateRoomId()
     const room: Room = {
       roomId,
+      maxPlayers,
       players: [],
       strokes: [],
       createdAt: Date.now(),
@@ -95,12 +123,13 @@ class RoomManager {
       gamePhase: 'waiting',
       currentDrawerIndex: 0,
       round: 0,
-      maxRounds: 3,
+      maxRounds: rounds,
       roundStartTime: 0,
-      roundDurationMs: roundDurationMs,
+      roundDurationMs,
       roundTimerRef: null,
       roundTickIntervalRef: null,
       wordPool: [],
+      wordCount,
       pendingWordChoices: [],
       pickPhaseEndsAt: 0,
       pickingTimerRef: null,
@@ -280,7 +309,7 @@ class RoomManager {
     room.gameStarted = true
     room.gamePhase = 'waiting'
     room.maxRounds = maxRounds
-    room.round = 0
+    room.round = 1
     room.currentDrawerIndex = 0
     room.wordPool = getRandomWords(maxRounds * room.players.length + 10) // Extra words for safety
 
