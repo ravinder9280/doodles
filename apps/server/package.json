@@ -1,5 +1,5 @@
 {
-  "name": "backend",
+  "name": "server",
   "version": "1.0.0",
   "main": "src/index.ts",
   "type": "module",
@@ -13,6 +13,8 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@repo/types": "workspace:*",
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.5",
     "@types/socket.io": "^3.0.1",

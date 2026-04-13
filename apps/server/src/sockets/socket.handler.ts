@@ -1,6 +1,7 @@
 import { Server, Socket } from "socket.io"
-import { roomManager, type Room, roomToConfigWire } from "../rooms/roomManager.js"
+import { roomManager, roomToConfigWire } from "../rooms/roomManager.js"
 import { getRandomWord } from "../constant/words.js"
+import type { Room } from "@repo/types"
 
 function clearRoomRoundTimers(room: Room): void {
   if (room.roundTimerRef) {
@@ -215,7 +216,7 @@ function endRound(roomId: string, io: Server, reason: 'time_up' | 'all_guessed')
   const roundScores = players.map(p => ({
     socketId: p.socketId,
     username: p.username,
-    pointsThisRound: Math.max(0, p.score - p.scoreAtDrawingStart)
+    pointsThisRound: Math.max(0, p.score - (p.scoreAtDrawingStart || 0))
   }))
 
   // Emit round end to all

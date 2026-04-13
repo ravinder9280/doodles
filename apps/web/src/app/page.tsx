@@ -9,6 +9,7 @@ import { Brush, Copy, Crown, Link, LogOut, MoreVertical, Paintbrush, RefreshCcw,
 import { toast } from "sonner"
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
+import { playerData, RoomConfig } from '@repo/types'
 interface Point {
   x: number
   y: number
@@ -21,23 +22,11 @@ interface Stroke {
   isComplete?: boolean
 }
 
-interface PlayerData {
-  socketId: string
-  username: string
-  image: string
-  score?: number
-  isHost?: boolean
-  guessedCorrectly?: boolean
-}
+
 
 type RoomMode = 'create' | 'join' | 'drawing'
 
-type RoomConfig = {
-  maxPlayers: number
-  rounds: number
-  wordCount: number
-  drawTime: number
-}
+
 
 const DEFAULT_ROOM_CONFIG: RoomConfig = {
   maxPlayers: 8,
@@ -60,11 +49,11 @@ const Page = () => {
   const [inputRoomId, setInputRoomId] = useState<string>('')
   const [roomError, setRoomError] = useState<string>('')
   const [username, setUsername] = useState<string>('')
-  const [players, setPlayers] = useState<PlayerData[]>([])
+  const [players, setPlayers] = useState<playerData[]>([])
   const [isHost, setIsHost] = useState<boolean>(false)
   const [showUsernameInput, setShowUsernameInput] = useState<boolean>(true)
   const [avatar, setAvatar] = useState<string>('') // current avatar URL
-  const prevPlayersRef = useRef<PlayerData[]>([])
+  const prevPlayersRef = useRef<playerData[]>([])
 
   function generateRandomString(length: number) {
     const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -259,7 +248,7 @@ const Page = () => {
     // Room created event
     newSocket.on(
       'room_created',
-      (data: { roomId: string; players: PlayerData[]; roomConfig?: RoomConfig }) => {
+      (data: { roomId: string; players: playerData[]; roomConfig?: RoomConfig }) => {
       console.log('Room created:', data.roomId)
       setRoomId(data.roomId)
       setRoomMode('drawing')
@@ -275,7 +264,7 @@ const Page = () => {
     newSocket.on('room_joined', (data: {
       roomId: string
       strokes: any[]
-      players: PlayerData[]
+      players: playerData[]
       gameState?: any
       roomConfig?: RoomConfig
     }) => {
@@ -344,7 +333,7 @@ const Page = () => {
       }
     })
 
-    newSocket.on('players_updated', (data: { players: PlayerData[] }) => {
+    newSocket.on('players_updated', (data: { players: playerData[] }) => {
       const newPlayers = data.players || []
       const prevPlayers = prevPlayersRef.current
 
@@ -429,7 +418,7 @@ const Page = () => {
     })
 
     // Game started event
-    newSocket.on('game_started', (data: { round: number; maxRounds: number; players: PlayerData[] }) => {
+    newSocket.on('game_started', (data: { round: number; maxRounds: number; players: playerData[] }) => {
       console.log('Game started:', data)
       setGameStarted(true)
       setRound(data.round)
@@ -649,11 +638,10 @@ const Page = () => {
     })
 
     // Score update event
-    newSocket.on('score_update', (data: { players: PlayerData[] }) => {
+    newSocket.on('score_update', (data: { players: playerData[] }) => {
       console.log('Score updated:', data)
       setPlayers(data.players || [])
     })
-
 
     // Draw event - modified to handle room-based drawing
     newSocket.on('draw', (data: { x: number; y: number; color: string; userId: string; isDrawing: boolean }) => {
@@ -694,10 +682,11 @@ const Page = () => {
           const updated = [...prev]
           // Find the last incomplete stroke from this user and mark it complete
           for (let i = updated.length - 1; i >= 0; i--) {
-            if (updated[i].userId === data.userId && !updated[i].isComplete) {
+            if (updated[i]?.userId === data.userId && !updated[i]?.isComplete) {
               updated[i] = {
-                ...updated[i],
-                isComplete: true
+                ...updated[i]!,
+                isComplete: true,
+                points: updated[i]?.points || []
               }
               break
             }
