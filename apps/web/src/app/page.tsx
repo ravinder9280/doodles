@@ -980,129 +980,129 @@ const Page = () => {
   }
 
   // Room selection UI
-  // if (roomMode !== 'drawing') {
-  //   return (
-  //     <div className="flex flex-col items-center  min-h-screen p-4 ">
+  if (roomMode !== 'drawing') {
+    return (
+      <div className="flex flex-col items-center  min-h-screen p-4 ">
 
-  //       <div className="my-10 max-w-md text-center">
-  //         <h1 className="text-6xl font-bold bg-gradient-to-r from-yellow-600 via-green-400 to-red-400 bg-clip-text text-transparent">
-  //           DOODLES
-  //         </h1>
-  //         <p className="mt-3 text-gray-400 md:text-lg">
-  //           Draw, guess, and compete with friends in this fast-paced real-time doodle game.
-  //         </p>
-  //       </div>
+        <div className="my-10 max-w-md text-center">
+          <h1 className="text-6xl font-bold bg-gradient-to-r from-yellow-600 via-green-400 to-red-400 bg-clip-text text-transparent">
+            DOODLES
+          </h1>
+          <p className="mt-3 text-gray-400 md:text-lg">
+            Draw, guess, and compete with friends in this fast-paced real-time doodle game.
+          </p>
+        </div>
 
-  //       <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
-  //         <div className="mb-4 flex items-center justify-center gap-4">
-  //           <div className="flex items-center gap-2">
-  //             <div className={`w-3 h-3 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-  //             <span className="text-sm font-medium ">
-  //               {connected ? 'Connected' : 'Disconnected'}
-  //             </span>
-  //           </div>
-  //         </div>
+        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
+          <div className="mb-4 flex items-center justify-center gap-4">
+            <div className="flex items-center gap-2">
+              <div className={`w-3 h-3 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span className="text-sm font-medium ">
+                {connected ? 'Connected' : 'Disconnected'}
+              </span>
+            </div>
+          </div>
 
-  //         {roomError && (
-  //           <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-  //             {roomError}
-  //           </div>
-  //         )}
+          {roomError && (
+            <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+              {roomError}
+            </div>
+          )}
 
-  //         {/* Username Input */}
-  //         {showUsernameInput && (
-  //           <div className="mb-4 flex items-center gap-2">
-  //             <input
-  //               type="text"
-  //               value={username}
-  //               onChange={(e) => setUsername(e.target.value)}
-  //               placeholder="Enter Your name"
-  //               className="max-w-[65%] md:max-w-fit flex-1 px-4 py-2 border border-gray-300 rounded focus:outline-none font-bold focus:ring-2 focus:ring-blue-500"
-  //               maxLength={20}
-  //               onKeyPress={(e) => {
-  //                 if (e.key === 'Enter' && username.trim()) {
-  //                   // Auto-focus next action
-  //                 }
-  //               }}
-  //             />
-  //             <div className=" flex items-center gap-2 bg-gray-100 p-2 rounded-lg">
-  //               <img
-  //                 src={avatar || generateAvatarUrl(username.trim() || 'guest')}
-  //                 alt="Avatar preview"
-  //                 className="w-8 h-8 rounded"
-  //               />
-  //             </div>
-  //             <button
-  //               onClick={() => {
-  //                 const seed = generateRandomString(8)
-  //                 const url = generateAvatarUrl(seed)
-  //                 localStorage.setItem('avatar', url)
-  //                 setAvatar(url)
-  //               }}
-  //               className=" flex items-center gap-2 bg-gray-100 p-2 rounded-lg"
-  //             >
-  //               <RefreshCcw size={14} />
-  //             </button>
-  //           </div>
-  //         )}
+          {/* Username Input */}
+          {showUsernameInput && (
+            <div className="mb-4 flex items-center gap-2">
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter Your name"
+                className="max-w-[65%] md:max-w-fit flex-1 px-4 py-2 border border-gray-300 rounded focus:outline-none font-bold focus:ring-2 focus:ring-blue-500"
+                maxLength={20}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && username.trim()) {
+                    // Auto-focus next action
+                  }
+                }}
+              />
+              <div className=" flex items-center gap-2 bg-gray-100 p-2 rounded-lg">
+                <img
+                  src={avatar || generateAvatarUrl(username.trim() || 'guest')}
+                  alt="Avatar preview"
+                  className="w-8 h-8 rounded"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  const seed = generateRandomString(8)
+                  const url = generateAvatarUrl(seed)
+                  localStorage.setItem('avatar', url)
+                  setAvatar(url)
+                }}
+                className=" flex items-center gap-2 bg-gray-100 p-2 rounded-lg"
+              >
+                <RefreshCcw size={14} />
+              </button>
+            </div>
+          )}
 
-  //         <div className="space-y-4">
-  //           {/* Create Room */}
-
-
+          <div className="space-y-4">
+            {/* Create Room */}
 
 
-  //           {/* Join Room */}
-  //           <div>
-  //             <label className="block text-sm font-medium text-gray-700 mb-2">
-  //               Join Existing Room
-  //             </label>
-  //             <div className="">
-  //               <input
-  //                 type="text"
-  //                 value={inputRoomId}
-  //                 onChange={(e) => setInputRoomId(e.target.value.toUpperCase())}
-  //                 placeholder="Enter Room ID"
-  //                 className=" w-full px-4 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-  //                 maxLength={8}
-  //                 onKeyPress={(e) => {
-  //                   if (e.key === 'Enter') {
-  //                     handleJoinRoom()
-  //                   }
-  //                 }}
-  //               />
-  //               <div className="mt-2">
 
-  //                 <button
-  //                   onClick={handleJoinRoom}
-  //                   disabled={!connected || !inputRoomId.trim() || !username.trim()}
-  //                   className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 w-full disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
-  //                 >
-  //                   Join
-  //                 </button>
-  //               </div>
-  //             </div>
-  //           </div>
-  //           {/* Divider */}
-  //           <div className="flex items-center gap-4">
-  //             <div className="flex-1 h-px bg-gray-300"></div>
-  //             <span className="text-gray-500 text-sm">OR</span>
-  //             <div className="flex-1 h-px bg-gray-300"></div>
-  //           </div>
-  //           <div>
-  //             <button
-  //               onClick={handleCreateRoom}
-  //               disabled={!connected || !username.trim()}
-  //               className="w-full px-4 py-3 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
-  //             >
-  //               Create New Room
-  //             </button>
-  //           </div>
-  //         </div>
-  //       </div>
-  //     </div>
-  //   )
-  // }
+
+            {/* Join Room */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Join Existing Room
+              </label>
+              <div className="">
+                <input
+                  type="text"
+                  value={inputRoomId}
+                  onChange={(e) => setInputRoomId(e.target.value.toUpperCase())}
+                  placeholder="Enter Room ID"
+                  className=" w-full px-4 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  maxLength={8}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      handleJoinRoom()
+                    }
+                  }}
+                />
+                <div className="mt-2">
+
+                  <button
+                    onClick={handleJoinRoom}
+                    disabled={!connected || !inputRoomId.trim() || !username.trim()}
+                    className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 w-full disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
+                  >
+                    Join
+                  </button>
+                </div>
+              </div>
+            </div>
+            {/* Divider */}
+            <div className="flex items-center gap-4">
+              <div className="flex-1 h-px bg-gray-300"></div>
+              <span className="text-gray-500 text-sm">OR</span>
+              <div className="flex-1 h-px bg-gray-300"></div>
+            </div>
+            <div>
+              <button
+                onClick={handleCreateRoom}
+                disabled={!connected || !username.trim()}
+                className="w-full px-4 py-3 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
+              >
+                Create New Room
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   // Drawing UI - Mobile Layout
   return (
