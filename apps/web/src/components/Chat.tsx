@@ -91,7 +91,7 @@ const Chat: React.FC<ChatProps> = ({
             </div>
 
             {/* Input Area */}
-            <div className="border-t border-r border-gray-200 bg-gray-100 p-2 flex gap-2">
+            <div className="border-t fixed w-full right-0 left-0 bottom-0 max-w-4xl mx-auto border-r border-gray-200 bg-gray-100 p-2 flex gap-2">
                 <div className="relative w-full">
 
                     <input

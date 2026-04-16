@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+"dev": "IP=$(hostname -I | awk '{print $1}') && echo \"Local Network: http://$IP:3000\" && next dev -H 0.0.0.0 -p 3000"  ,
+  "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
