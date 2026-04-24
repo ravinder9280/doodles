@@ -6,8 +6,7 @@
   "scripts": {
     "dist": "npx tsc",
     "dev": "nodemon src/index.ts",
-    "start": "node dist/index.js",
-    "prepare": "husky"
+    "start": "node dist/index.js"
   },
   "author": "ravinder",
   "license": "ISC",
